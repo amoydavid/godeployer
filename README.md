@@ -58,8 +58,9 @@ recipe:
   - build
   - setup
   - update_code
-  - install_dependencies
   - publish_release
+  - install_dependencies
+  - symlink_release
   - restart_app
   - cleanup
 ```

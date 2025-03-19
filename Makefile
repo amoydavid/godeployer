@@ -11,6 +11,11 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(GO_FILES)
 
+.PHONY: install
+install:
+	make build
+	sudo cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/
+
 # 清理构建文件
 .PHONY: clean
 clean:

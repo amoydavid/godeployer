@@ -241,6 +241,10 @@ recipe:
   - build
   - backup
   - upload-app
+  - publish_release
+  - symlink_release
+  - restart_app
+  - cleanup
 
 # 部署钩子
 hooks:
@@ -277,9 +281,7 @@ hooks:
   
   # 全局失败钩子
   on_failed:
-    - echo "部署过程中出现错误！"
-    - echo "错误信息: {{error}}"
-    - echo "失败任务: {{failed_task}}"
+    - echo "部署过程中出现错误！错误信息: {{error}}"
 
 # 全局变量
 vars:

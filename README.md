@@ -199,9 +199,10 @@ recipe:
   - build
   - setup
   - update_code
+  - publish_release
   - install_dependencies
   - migrate    # 自定义任务
-  - publish_release
+  - symlink_release
   - restart_app
   - notify     # 自定义任务
   - cleanup
@@ -215,7 +216,8 @@ GoDeployer 内置以下任务：
 - **setup**：在远程服务器上设置目录结构
 - **update_code**：准备和上传代码到远程服务器
 - **install_dependencies**：在远程服务器上安装应用依赖
-- **publish_release**：将新版本设置为当前版本
+- **publish_release**：设置共享目录和文件
+- **symlink_release**: 将当前发布版本软链到current目录
 - **restart_app**：重启远程服务器上的应用
 - **cleanup**：清理旧的发布版本
 

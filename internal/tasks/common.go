@@ -12,6 +12,7 @@ func RegisterBuiltinTasks(registry *registry.TaskRegistry) {
 	registry.Register(NewUpdateCodeTask())
 	registry.Register(NewInstallDependenciesTask())
 	registry.Register(NewPublishReleaseTask())
+	registry.Register(NewSymlinkReleaseTask()) // 注册软链任务
 	registry.Register(NewRestartAppTask())
 	registry.Register(NewCleanupTask())
 	registry.Register(NewRollbackTask(1)) // 添加回滚任务，默认回滚1个版本

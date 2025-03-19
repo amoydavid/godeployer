@@ -21,7 +21,7 @@ func (t *PublishReleaseTask) Name() string {
 
 // Description 返回任务描述
 func (t *PublishReleaseTask) Description() string {
-	return "将新的发布版本设置为当前版本"
+	return "设置共享目录和文件"
 }
 
 // Execute 执行发布任务
@@ -100,14 +100,6 @@ fi
 		}
 	}
 
-	// 使用默认发布命令，创建软链接到新的发布版本
-	publishCmd := "ln -sfn {{release_path}} {{remote_dir}}/current"
-
-	// 创建软链接到新的发布版本
-	if err := exec.RunRemoteCommand(publishCmd); err != nil {
-		return err
-	}
-
-	ctx.Logger.Success("发布成功，当前版本已更新")
+	ctx.Logger.Success("发布配置成功，共享目录和文件已设置")
 	return nil
 }

@@ -316,6 +316,19 @@ func runDeploy() {
 		os.Exit(1)
 	}
 
+	// 用户确认
+	dryRunText := ""
+	if dryRun {
+		dryRunText = "（模拟运行模式）"
+	}
+	fmt.Printf("将部署 %s 到 %s 环境%s，确认继续? (y/n): ", cfg.Project, selectedStage, dryRunText)
+	var response string
+	fmt.Scanln(&response)
+	if response != "y" && response != "Y" {
+		fmt.Println("部署已取消")
+		return
+	}
+
 	// 创建可取消的上下文
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -418,6 +431,19 @@ func runRollback() {
 	if _, exists := cfg.Stages[selectedStage]; !exists {
 		fmt.Fprintf(os.Stderr, "错误: 配置中未找到阶段 '%s'\n", selectedStage)
 		os.Exit(1)
+	}
+
+	// 用户确认
+	rollbackDryRunText := ""
+	if dryRun {
+		rollbackDryRunText = "（模拟运行模式）"
+	}
+	fmt.Printf("将回滚 %s 环境，步数：%d%s，确认继续? (y/n): ", selectedStage, rollbackSteps, rollbackDryRunText)
+	var rollbackResponse string
+	fmt.Scanln(&rollbackResponse)
+	if rollbackResponse != "y" && rollbackResponse != "Y" {
+		fmt.Println("回滚已取消")
+		return
 	}
 
 	// 创建可取消的上下文

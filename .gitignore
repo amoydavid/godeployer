@@ -1,0 +1,7 @@
+deploy.yaml
+.DS_Store
+.idea
+.vscode
+/deployer
+cmd/deployer/deployer
+/build

@@ -1,0 +1,121 @@
+# NestJS 应用部署配置
+project: nest-app
+default_stage: production
+
+# 定义不同部署环境
+stages:
+  development:
+    server: dev@dev-server.example.com
+    remote_dir: /var/www/nest-app-dev
+    keep_releases: 3
+    vars:
+      NODE_ENV: development
+      PORT: "3000"
+  
+  staging:
+    server: stage@stage-server.example.com
+    remote_dir: /var/www/nest-app-staging
+    keep_releases: 3
+    vars:
+      NODE_ENV: staging
+      PORT: "3000"
+  
+  production:
+    server: prod@prod-server.example.com
+    remote_dir: /var/www/nest-app-prod
+    keep_releases: 5
+    vars:
+      NODE_ENV: production
+      PORT: "3000"
+
+# 全局选项
+options:
+  release_dir_format: "releases/%Y%m%d%H%M%S"
+  shared_dirs:
+    - logs
+    - uploads
+    - node_modules
+  shared_files:
+    - .env
+    - .env.production
+
+# 自定义任务
+tasks:
+  build:
+    local: |
+      npm ci
+      npm run build
+
+  # setup:
+  #   remote: |
+  #     mkdir -p {{remote_dir}}/releases
+  #     mkdir -p {{remote_dir}}/shared
+  #     mkdir -p {{remote_dir}}/shared/logs
+  #     mkdir -p {{remote_dir}}/shared/uploads
+  #     mkdir -p {{remote_dir}}/shared/node_modules
+
+  update_code:
+    local: |
+      rm -rf .deploy
+      mkdir -p .deploy
+      cp -r ./dist .deploy/
+      cp -r ./node_modules .deploy/
+      cp package.json package-lock.json .deploy/
+      cp .env* .deploy/ || true
+    upload:
+      source: .deploy
+      dest: "{{release_path}}"
+      options: "--delete"
+
+  install_dependencies:
+    remote: cd {{release_path}} && npm ci --omit=dev
+
+  migrate_database:
+    remote: cd {{release_path}} && npm run migration:run
+
+  # publish_release:
+  #   remote: ln -sfn {{release_path}} {{remote_dir}}/current
+
+  restart_app:
+    remote: |
+      if pm2 list | grep -q 'nest-app'; then
+        pm2 reload nest-app
+      else
+        cd {{remote_dir}}/current && pm2 start dist/main.js --name nest-app --env {{stage}}
+      fi
+      pm2 save
+
+  cleanup:
+    # remote: ls -dt {{remote_dir}}/releases/* | tail -n +{{keep_releases+1}} | xargs rm -rf || true
+    local: rm -rf .deploy
+
+# 钩子定义
+hooks:
+  before_all:
+    - echo "开始部署到 {{stage}} 环境..."
+  
+  after_publish_release:
+    - echo "新版本已发布在 {{release_path}}"
+  
+  on_failed:
+    - echo "部署失败！"
+    - echo "检查日志获取更多信息..."
+  
+  after_all:
+    - echo "部署完成！"
+
+# 部署流程（任务执行顺序）
+recipe:
+  - build
+  - setup
+  - update_code
+  - install_dependencies
+  - publish_release
+  - migrate_database
+  - restart_app
+  - cleanup
+
+# 全局变量
+vars:
+  app_name: nest-app
+  node_version: "18" 

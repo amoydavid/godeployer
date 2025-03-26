@@ -4,6 +4,7 @@ import (
 	deployctx "deployer/internal/context"
 	"deployer/internal/executor"
 	"deployer/internal/task"
+	"fmt"
 )
 
 // CleanupTask 表示清理旧发布版本的任务
@@ -53,7 +54,8 @@ func (t *CleanupTask) Execute(ctx *deployctx.DeployContext) error {
 	}
 
 	// 删除旧的发布版本，保留最近的N个
-	cleanupCmd := "ls -dt {{remote_dir}}/releases/* | tail -n +{{keep_releases+1}} | xargs rm -rf || true"
+	cleanupCmd := fmt.Sprintf("ls -dt %s/releases/* | tail -n +%d | xargs rm -rf || true",
+		ctx.StageConfig.RemoteDir, keepReleases+1)
 
 	// 在远程服务器上执行清理
 	if err := exec.RunRemoteCommand(cleanupCmd); err != nil {

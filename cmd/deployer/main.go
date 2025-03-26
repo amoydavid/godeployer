@@ -20,18 +20,18 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/signal"
-	"sort"
-	"syscall"
-
 	"deployer/internal/config"
 	deployctx "deployer/internal/context"
 	"deployer/internal/executor"
 	"deployer/internal/recipe"
 	"deployer/internal/registry"
 	"deployer/internal/tasks"
+	"fmt"
+	"os"
+	"os/exec"
+	"os/signal"
+	"sort"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -47,11 +47,7 @@ var (
 	dryRun        bool
 	pluginDir     string
 	rollbackSteps int
-)
-
-func main() {
-	// 创建根命令
-	rootCmd := &cobra.Command{
+	RootCmd       = &cobra.Command{
 		Use:   "deployer",
 		Short: "GoDeployer - 灵活的部署工具",
 		Long:  `GoDeployer - 一个灵活、可扩展的部署自动化工具。`,
@@ -59,13 +55,15 @@ func main() {
 			runDeploy()
 		},
 	}
+)
 
+func main() {
 	// 添加命令行标志
-	rootCmd.PersistentFlags().StringVar(&configFile, "config", "deploy.yaml", "配置文件路径")
-	rootCmd.PersistentFlags().StringVar(&stage, "stage", "", "部署阶段（环境）")
-	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "模拟部署，不进行实际更改")
-	// rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "启用详细日志记录")
-	rootCmd.PersistentFlags().StringVar(&pluginDir, "plugins", "./plugins", "插件目录路径 (当前版本中已禁用)")
+	RootCmd.PersistentFlags().StringVar(&configFile, "config", "deploy.yaml", "配置文件路径")
+	RootCmd.PersistentFlags().StringVar(&stage, "stage", "", "部署阶段（环境）")
+	RootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "模拟部署，不进行实际更改")
+	// RootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "启用详细日志记录")
+	RootCmd.PersistentFlags().StringVar(&pluginDir, "plugins", "./plugins", "插件目录路径 (当前版本中已禁用)")
 
 	// 添加版本子命令
 	versionCmd := &cobra.Command{
@@ -75,7 +73,7 @@ func main() {
 			fmt.Printf("GoDeployer 版本 %s\n", VERSION)
 		},
 	}
-	rootCmd.AddCommand(versionCmd)
+	RootCmd.AddCommand(versionCmd)
 
 	// 添加初始化配置子命令
 	initCmd := &cobra.Command{
@@ -85,7 +83,7 @@ func main() {
 			initConfig()
 		},
 	}
-	rootCmd.AddCommand(initCmd)
+	RootCmd.AddCommand(initCmd)
 
 	// 添加任务列表子命令
 	listCmd := &cobra.Command{
@@ -95,7 +93,7 @@ func main() {
 			listTasks()
 		},
 	}
-	rootCmd.AddCommand(listCmd)
+	RootCmd.AddCommand(listCmd)
 
 	// 添加回滚子命令
 	rollbackCmd := &cobra.Command{
@@ -106,10 +104,59 @@ func main() {
 		},
 	}
 	rollbackCmd.Flags().IntVar(&rollbackSteps, "steps", 1, "回滚的步数，默认为1，表示回滚到上一个版本")
-	rootCmd.AddCommand(rollbackCmd)
+	RootCmd.AddCommand(rollbackCmd)
+
+	// 添加 SSH 子命令
+	sshCmd := &cobra.Command{
+		Use:   "ssh [stage]",
+		Short: "通过 SSH 登录到远程服务器",
+		Long: `通过 SSH 登录到远程服务器，获得完整的 shell 环境。
+如果没有指定 stage，将使用默认 stage。`,
+		Run: func(cmd *cobra.Command, args []string) {
+			// 加载配置
+			cfg, err := config.LoadConfig(configFile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "加载配置错误: %v\n", err)
+				os.Exit(1)
+			}
+
+			// 确定要使用的阶段
+			selectedStage := ""
+			if len(args) > 0 {
+				selectedStage = args[0]
+			} else {
+				selectedStage = cfg.DefaultStage
+			}
+
+			if _, exists := cfg.Stages[selectedStage]; !exists {
+				fmt.Fprintf(os.Stderr, "错误: 配置中未找到阶段 '%s'\n", selectedStage)
+				os.Exit(1)
+			}
+
+			// 创建部署上下文
+			deployCtx, err := deployctx.NewDeployContext(cmd.Context(), cfg, selectedStage, false)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "创建部署上下文错误: %v\n", err)
+				os.Exit(1)
+			}
+
+			// 构建 SSH 命令
+			sshCmd := exec.Command("ssh", "-t", deployCtx.StageConfig.Server, "cd "+deployCtx.StageConfig.RemoteDir+"/current 2>/dev/null || cd "+deployCtx.StageConfig.RemoteDir+"; exec $SHELL -l")
+			sshCmd.Stdin = os.Stdin
+			sshCmd.Stdout = os.Stdout
+			sshCmd.Stderr = os.Stderr
+
+			// 执行 SSH 命令
+			if err := sshCmd.Run(); err != nil {
+				fmt.Fprintf(os.Stderr, "SSH 连接失败: %v\n", err)
+				os.Exit(1)
+			}
+		},
+	}
+	RootCmd.AddCommand(sshCmd)
 
 	// 执行命令
-	if err := rootCmd.Execute(); err != nil {
+	if err := RootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "执行出错: %v\n", err)
 		os.Exit(1)
 	}

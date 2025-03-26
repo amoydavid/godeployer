@@ -259,6 +259,7 @@ deployer init         # 初始化配置文件
 deployer list         # 列出配置的任务和环境
 deployer rollback     # 回滚到之前的版本
   -steps int          # 回滚的步数，默认为1 (回滚到上一个版本)
+deployer ssh [stage]  # 通过 SSH 登录到远程服务器
 ```
 
 ## 插件开发

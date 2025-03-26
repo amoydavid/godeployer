@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	deployctx "deployer/internal/context"
@@ -86,7 +87,10 @@ func (e *Executor) RunRemoteCommand(command string) error {
 	cmdCtx, cancel := context.WithTimeout(e.ctx.Context, defaultTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(cmdCtx, "ssh", e.ctx.StageConfig.Server, resolvedCommand)
+	// 使用登录 shell 执行命令
+	shellCmd := fmt.Sprintf("exec $SHELL -l -c '%s'", resolvedCommand)
+	e.ctx.Logger.Infof("执行远程命令: %s %s %s", "ssh", e.ctx.StageConfig.Server, shellCmd)
+	cmd := exec.CommandContext(cmdCtx, "ssh", e.ctx.StageConfig.Server, shellCmd)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -108,7 +112,10 @@ func (e *Executor) RunRemoteCommandWithOutput(command string) (string, error) {
 		return "[模拟运行输出]", nil
 	}
 
-	cmd := exec.Command("ssh", e.ctx.StageConfig.Server, resolvedCommand)
+	// 使用登录 shell 执行命令
+	shellCmd := fmt.Sprintf("exec $SHELL -l -c '%s'", resolvedCommand)
+	e.ctx.Logger.Infof("执行远程命令: %s %s %s", "ssh", e.ctx.StageConfig.Server, shellCmd)
+	cmd := exec.Command("ssh", e.ctx.StageConfig.Server, shellCmd)
 	output, err := cmd.CombinedOutput()
 
 	return string(output), err
@@ -126,7 +133,13 @@ func (e *Executor) UploadDirectory(source, destination string, options string) e
 	resolvedDest := e.ctx.ResolveVar(destination)
 	resolvedOptions := e.ctx.ResolveVar(options)
 
-	e.ctx.Logger.Infof("上传目录从 %s 到 %s:%s",
+	// 检查源路径是否存在
+	sourceInfo, err := os.Stat(resolvedSource)
+	if err != nil {
+		return fmt.Errorf("源路径不存在: %w", err)
+	}
+
+	e.ctx.Logger.Infof("上传从 %s 到 %s:%s",
 		resolvedSource, e.ctx.StageConfig.Server, resolvedDest)
 
 	if e.ctx.DryRun {
@@ -141,18 +154,45 @@ func (e *Executor) UploadDirectory(source, destination string, options string) e
 		return fmt.Errorf("创建远程目录失败: %w", err)
 	}
 
-	// 使用 tar 上传（带选项）
-	optionsStr := ""
-	if resolvedOptions != "" {
-		optionsStr = resolvedOptions
+	// 根据源路径类型选择上传方式
+	if sourceInfo.IsDir() {
+		// 如果是目录，使用 tar 上传
+		optionsStr := ""
+		if resolvedOptions != "" {
+			optionsStr = resolvedOptions
+		}
+
+		tarCommand := fmt.Sprintf("cd %s && tar -czf - . | ssh %s \"tar -xzf - -C %s\" %s",
+			resolvedSource, e.ctx.StageConfig.Server, resolvedDest, optionsStr)
+
+		cmd := exec.Command("sh", "-c", tarCommand)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		return cmd.Run()
+	} else {
+		// 如果是单个文件，使用 scp 上传
+		optionsStr := ""
+		if resolvedOptions != "" {
+			optionsStr = resolvedOptions
+		}
+
+		// 构建目标路径：如果目标是目录，则保持原文件名
+		targetPath := resolvedDest
+		if strings.HasSuffix(resolvedDest, "/") {
+			targetPath = resolvedDest + sourceInfo.Name()
+		}
+
+		scpCommand := fmt.Sprintf("scp %s %s %s:%s",
+			optionsStr,
+			resolvedSource,
+			e.ctx.StageConfig.Server,
+			targetPath)
+
+		cmd := exec.Command("sh", "-c", scpCommand)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		return cmd.Run()
 	}
-
-	tarCommand := fmt.Sprintf("cd %s && tar -czf - . | ssh %s \"tar -xzf - -C %s\" %s",
-		resolvedSource, e.ctx.StageConfig.Server, resolvedDest, optionsStr)
-
-	cmd := exec.Command("sh", "-c", tarCommand)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	return cmd.Run()
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -24,6 +25,16 @@ func NewExecutor(ctx *deployctx.DeployContext) *Executor {
 // 默认超时时间
 const defaultTimeout = 10 * time.Minute
 
+// getSystemShell 根据操作系统返回合适的 shell 命令
+func getSystemShell() (string, []string) {
+	switch runtime.GOOS {
+	case "windows":
+		return "cmd", []string{"/c"}
+	default:
+		return "sh", []string{"-c"}
+	}
+}
+
 // RunLocalCommand 在本地执行命令
 func (e *Executor) RunLocalCommand(command string) error {
 	resolvedCommand := e.ctx.ResolveVar(command)
@@ -38,7 +49,8 @@ func (e *Executor) RunLocalCommand(command string) error {
 	cmdCtx, cancel := context.WithTimeout(e.ctx.Context, defaultTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(cmdCtx, "sh", "-c", resolvedCommand)
+	shell, args := getSystemShell()
+	cmd := exec.CommandContext(cmdCtx, shell, append(args, resolvedCommand)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -63,7 +75,8 @@ func (e *Executor) RunLocalCommandWithOutput(command string) (string, error) {
 	cmdCtx, cancel := context.WithTimeout(e.ctx.Context, defaultTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(cmdCtx, "sh", "-c", resolvedCommand)
+	shell, args := getSystemShell()
+	cmd := exec.CommandContext(cmdCtx, shell, append(args, resolvedCommand)...)
 	output, err := cmd.CombinedOutput()
 
 	if cmdCtx.Err() == context.DeadlineExceeded {

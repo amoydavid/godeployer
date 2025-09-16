@@ -39,10 +39,11 @@ type Config struct {
 
 // StageConfig 表示环境特定配置
 type StageConfig struct {
-	Server       string                 `yaml:"server"`
-	RemoteDir    string                 `yaml:"remote_dir"`
-	KeepReleases int                    `yaml:"keep_releases"`
-	Vars         map[string]interface{} `yaml:"vars"`
+	Server         string                 `yaml:"server"`
+	PrivateKeyPath string                 `yaml:"private_key_path"`
+	RemoteDir      string                 `yaml:"remote_dir"`
+	KeepReleases   int                    `yaml:"keep_releases"`
+	Vars           map[string]interface{} `yaml:"vars"`
 }
 
 // OptionsConfig 表示全局选项

@@ -140,8 +140,15 @@ func main() {
 				os.Exit(1)
 			}
 
-			// 构建 SSH 命令
-			sshCmd := exec.Command("ssh", "-t", deployCtx.StageConfig.Server, "cd "+deployCtx.StageConfig.RemoteDir+"/current 2>/dev/null || cd "+deployCtx.StageConfig.RemoteDir+"; exec $SHELL -l")
+			// 构建 SSH 命令，支持私钥路径
+			sshArgs := []string{"-t"}
+			if deployCtx.StageConfig.PrivateKeyPath != "" {
+				sshArgs = append(sshArgs, "-i", deployCtx.StageConfig.PrivateKeyPath)
+			}
+			sshArgs = append(sshArgs, deployCtx.StageConfig.Server,
+				"cd "+deployCtx.StageConfig.RemoteDir+"/current 2>/dev/null || cd "+deployCtx.StageConfig.RemoteDir+"; exec $SHELL -l",
+			)
+			sshCmd := exec.Command("ssh", sshArgs...)
 			sshCmd.Stdin = os.Stdin
 			sshCmd.Stdout = os.Stdout
 			sshCmd.Stderr = os.Stderr

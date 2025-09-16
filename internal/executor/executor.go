@@ -101,7 +101,7 @@ func (e *Executor) RunRemoteCommand(command string) error {
 	defer cancel()
 
 	// 使用登录 shell 执行命令
-	shellCmd := fmt.Sprintf("exec $SHELL -l -c '%s'", resolvedCommand)
+	shellCmd := fmt.Sprintf("exec bash -l -c '%s'", resolvedCommand)
 	e.ctx.Logger.Infof("执行远程命令: %s %s %s", "ssh", e.ctx.StageConfig.Server, shellCmd)
 	cmd := exec.CommandContext(cmdCtx, "ssh", e.ctx.StageConfig.Server, shellCmd)
 	cmd.Stdout = os.Stdout

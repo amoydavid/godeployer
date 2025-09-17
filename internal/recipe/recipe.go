@@ -216,7 +216,15 @@ func (e *HookExecutor) executeRemote(command string) error {
 	cmdCtx, cancel := context.WithTimeout(e.ctx.Context, 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(cmdCtx, "ssh", e.ctx.StageConfig.Server, command)
+	// 组装 ssh 参数，考虑私钥
+	sshArgs := []string{}
+	if e.ctx.StageConfig.PrivateKeyPath != "" {
+		sshArgs = append(sshArgs, "-i", e.ctx.StageConfig.PrivateKeyPath)
+	}
+	sshArgs = append(sshArgs, e.ctx.StageConfig.Server, command)
+	e.ctx.Logger.Infof("执行远程命令: ssh %s", strings.Join(sshArgs, " "))
+	cmd := exec.CommandContext(cmdCtx, "ssh", sshArgs...)
+
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 

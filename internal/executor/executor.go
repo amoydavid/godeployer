@@ -102,8 +102,14 @@ func (e *Executor) RunRemoteCommand(command string) error {
 
 	// 使用登录 shell 执行命令
 	shellCmd := fmt.Sprintf("exec bash -l -c '%s'", resolvedCommand)
-	e.ctx.Logger.Infof("执行远程命令: %s %s %s", "ssh", e.ctx.StageConfig.Server, shellCmd)
-	cmd := exec.CommandContext(cmdCtx, "ssh", e.ctx.StageConfig.Server, shellCmd)
+	// 组装 ssh 参数，考虑私钥
+	sshArgs := []string{}
+	if e.ctx.StageConfig.PrivateKeyPath != "" {
+		sshArgs = append(sshArgs, "-i", e.ctx.StageConfig.PrivateKeyPath)
+	}
+	sshArgs = append(sshArgs, e.ctx.StageConfig.Server, shellCmd)
+	e.ctx.Logger.Infof("执行远程命令: ssh %s", strings.Join(sshArgs, " "))
+	cmd := exec.CommandContext(cmdCtx, "ssh", sshArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -125,12 +131,23 @@ func (e *Executor) RunRemoteCommandWithOutput(command string) (string, error) {
 		return "[模拟运行输出]", nil
 	}
 
+	// 创建有超时的上下文
+	cmdCtx, cancel := context.WithTimeout(e.ctx.Context, defaultTimeout)
+	defer cancel()
+
 	// 使用登录 shell 执行命令
 	shellCmd := fmt.Sprintf("exec $SHELL -l -c '%s'", resolvedCommand)
-	e.ctx.Logger.Infof("执行远程命令: %s %s %s", "ssh", e.ctx.StageConfig.Server, shellCmd)
-	cmd := exec.Command("ssh", e.ctx.StageConfig.Server, shellCmd)
+	sshArgs := []string{}
+	if e.ctx.StageConfig.PrivateKeyPath != "" {
+		sshArgs = append(sshArgs, "-i", e.ctx.StageConfig.PrivateKeyPath)
+	}
+	sshArgs = append(sshArgs, e.ctx.StageConfig.Server, shellCmd)
+	e.ctx.Logger.Infof("执行远程命令: ssh %s", strings.Join(sshArgs, " "))
+	cmd := exec.CommandContext(cmdCtx, "ssh", sshArgs...)
 	output, err := cmd.CombinedOutput()
-
+	if cmdCtx.Err() == context.DeadlineExceeded {
+		return string(output), fmt.Errorf("远程命令执行超时(超过 %s): %s", defaultTimeout, resolvedCommand)
+	}
 	return string(output), err
 }
 
@@ -175,8 +192,22 @@ func (e *Executor) UploadDirectory(source, destination string, options string) e
 			optionsStr = resolvedOptions
 		}
 
-		tarCommand := fmt.Sprintf("cd %s && tar -czf - . | ssh %s \"tar -xzf - -C %s\" %s",
-			resolvedSource, e.ctx.StageConfig.Server, resolvedDest, optionsStr)
+		// 构建 ssh 参数（在管道命令中以字符串形式）
+		sshInlineArgs := ""
+		if e.ctx.StageConfig.PrivateKeyPath != "" {
+			// 直接附加 -i 参数；路径简单情况下无需复杂转义
+			sshInlineArgs = fmt.Sprintf("-i %s ", e.ctx.StageConfig.PrivateKeyPath)
+		}
+
+		// 根据本地操作系统选择合适的 tar 命令
+		tarLocal := "tar -czf - ."
+		if runtime.GOOS == "darwin" {
+			// 在 macOS 上禁用元数据与扩展属性，并排除垃圾文件
+			tarLocal = "COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata --exclude '._*' --exclude '.DS_Store' -czf - ."
+		}
+
+		tarCommand := fmt.Sprintf("cd %s && %s | ssh %s%s \"tar -xzf - -C %s\" %s",
+			resolvedSource, tarLocal, sshInlineArgs, e.ctx.StageConfig.Server, resolvedDest, optionsStr)
 
 		cmd := exec.Command("sh", "-c", tarCommand)
 		cmd.Stdout = os.Stdout
@@ -196,7 +227,12 @@ func (e *Executor) UploadDirectory(source, destination string, options string) e
 			targetPath = resolvedDest + sourceInfo.Name()
 		}
 
-		scpCommand := fmt.Sprintf("scp %s %s %s:%s",
+		keyPart := ""
+		if e.ctx.StageConfig.PrivateKeyPath != "" {
+			keyPart = fmt.Sprintf("-i %s ", e.ctx.StageConfig.PrivateKeyPath)
+		}
+		scpCommand := fmt.Sprintf("scp %s%s %s %s:%s",
+			keyPart,
 			optionsStr,
 			resolvedSource,
 			e.ctx.StageConfig.Server,

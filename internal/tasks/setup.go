@@ -29,9 +29,9 @@ func (t *SetupTask) Execute(ctx *deployctx.DeployContext) error {
 	exec := executor.NewExecutor(ctx)
 
 	// 如果配置中有自定义远程命令，则使用它
-	taskCfg, ok := ctx.Config.Tasks["setup"]
-	if ok && taskCfg.Remote != "" {
-		return exec.RunRemoteCommand(taskCfg.Remote)
+	cmd, ok := ctx.GetTaskRemoteCmd("setup")
+	if ok {
+		return exec.RunRemoteCommand(cmd)
 	}
 
 	// 否则，使用默认设置命令

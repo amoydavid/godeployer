@@ -9,6 +9,7 @@ import (
 	"time"
 
 	deployctx "deployer/internal/context"
+	"deployer/internal/executor"
 	"deployer/internal/registry"
 )
 
@@ -30,101 +31,220 @@ func NewRecipe(registry *registry.TaskRegistry, tasks []string, hooks map[string
 
 // Execute 运行配方
 func (r *Recipe) Execute(ctx *deployctx.DeployContext) error {
-	// 运行全局前置钩子
-	if err := r.runHook(ctx, "before_all", nil); err != nil {
-		return fmt.Errorf("before 钩子失败: %w", err)
-	}
+	// 初始化 SSH 连接池（提升性能）
+	pool := executor.GetGlobalPool()
+	defer pool.Close() // 确保部署结束时关闭所有连接
 
-	// 按顺序执行每个任务
-	for _, taskName := range r.tasks {
-		// 运行任务特定的前置钩子
-		hookName := fmt.Sprintf("before_%s", taskName)
-		if err := r.runHook(ctx, hookName, nil); err != nil {
-			return fmt.Errorf("%s 钩子失败: %w", hookName, err)
-		}
-
-		// 获取并执行任务
-		task, err := r.registry.Get(taskName)
+	// 为当前服务器创建 ControlMaster 连接
+	if !ctx.DryRun {
+		socket, isNew, err := pool.GetMasterSocket(ctx.StageConfig.PrivateKeyPath, ctx.StageConfig.Server)
 		if err != nil {
-			return fmt.Errorf("任务 '%s' 错误: %w", taskName, err)
-		}
-
-		ctx.Logger.Infof("执行任务: %s", taskName)
-		ctx.Logger.Infof("描述: %s", task.Description())
-
-		if err := task.Execute(ctx); err != nil {
-			// 运行任务特定的失败钩子
-			failedTaskHook := fmt.Sprintf("after_%s:failed", taskName)
-			failedTaskErr := r.runHook(ctx, failedTaskHook, map[string]interface{}{
-				"failed_task": taskName,
-				"error":       err.Error(),
-			})
-
-			if failedTaskErr != nil {
-				// 记录但继续使用原始错误
-				ctx.Logger.Errorf("运行 %s 钩子失败: %v", failedTaskHook, failedTaskErr)
+			ctx.Logger.Warnf("创建 SSH 连接池失败: %v，将直接连接", err)
+		} else {
+			ctx.SSHPoolSocket = socket // 将 socket 路径存储到 context 中
+			if isNew {
+				ctx.Logger.Infof("已创建 SSH 连接池: %s", socket)
 			}
-
-			// 运行通用的任务后钩子（无论成功失败）
-			afterTaskHook := fmt.Sprintf("after_%s", taskName)
-			afterTaskErr := r.runHook(ctx, afterTaskHook, map[string]interface{}{
-				"failed_task": taskName,
-				"error":       err.Error(),
-				"status":      "failed",
-			})
-
-			if afterTaskErr != nil {
-				ctx.Logger.Errorf("运行 %s 钩子失败: %v", afterTaskHook, afterTaskErr)
-			}
-
-			// 运行全局失败钩子
-			failedErr := r.runHook(ctx, "on_failed", map[string]interface{}{
-				"failed_task": taskName,
-				"error":       err.Error(),
-			})
-
-			if failedErr != nil {
-				// 记录但继续使用原始错误
-				ctx.Logger.Errorf("运行 on_failed 钩子失败: %v", failedErr)
-			}
-
-			return fmt.Errorf("任务 '%s' 失败: %w", taskName, err)
-		}
-
-		// 运行任务特定的成功钩子
-		successHook := fmt.Sprintf("after_%s:success", taskName)
-		if err := r.runHook(ctx, successHook, map[string]interface{}{
-			"task":   taskName,
-			"status": "success",
-		}); err != nil {
-			ctx.Logger.Errorf("运行 %s 钩子失败: %v", successHook, err)
-		}
-
-		// 运行任务特定的后置钩子（无论成功失败）
-		afterHook := fmt.Sprintf("after_%s", taskName)
-		if err := r.runHook(ctx, afterHook, map[string]interface{}{
-			"task":   taskName,
-			"status": "success",
-		}); err != nil {
-			return fmt.Errorf("%s 钩子失败: %w", afterHook, err)
 		}
 	}
+
+	// 运行全局前置钩子
+	if err := r.runBeforeAll(ctx); err != nil {
+		return err
+	}
+
+	// 执行所有任务
+	taskErr := r.executeTasks(ctx)
 
 	// 运行全局后置钩子
-	if err := r.runHook(ctx, "after_all", nil); err != nil {
-		return fmt.Errorf("after 钩子失败: %w", err)
+	if err := r.runAfterAll(ctx); err != nil {
+		return err
+	}
+
+	return taskErr
+}
+
+// executeTasks 执行所有任务
+func (r *Recipe) executeTasks(ctx *deployctx.DeployContext) error {
+	for i, taskName := range r.tasks {
+		current := i + 1
+		total := len(r.tasks)
+
+		if err := r.executeSingleTask(ctx, taskName, current, total); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// executeSingleTask 执行单个任务及其相关钩子
+func (r *Recipe) executeSingleTask(ctx *deployctx.DeployContext, taskName string, current, total int) error {
+	// 运行前置钩子
+	if err := r.runBeforeTask(ctx, taskName); err != nil {
+		return err
+	}
+
+	// 执行任务本身
+	taskErr := r.runTask(ctx, taskName, current, total)
+
+	// 运行后置钩子
+	if err := r.runAfterTask(ctx, taskName, taskErr); err != nil {
+		return err
+	}
+
+	return taskErr
+}
+
+// runTask 执行单个任务
+func (r *Recipe) runTask(ctx *deployctx.DeployContext, taskName string, current, total int) error {
+	// 获取任务
+	task, err := r.registry.Get(taskName)
+	if err != nil {
+		return fmt.Errorf("任务 '%s' 错误: %w", taskName, err)
+	}
+
+	// 显示任务信息
+	ctx.Logger.Infof("[%d/%d] 执行任务: %s", current, total, taskName)
+	ctx.Logger.Infof("描述: %s", task.Description())
+
+	// 执行任务
+	return task.Execute(ctx)
+}
+
+// runBeforeAll 运行全局前置钩子
+func (r *Recipe) runBeforeAll(ctx *deployctx.DeployContext) error {
+	beforeHooks := ctx.Config.Hooks["before_deploy"]
+	if len(beforeHooks) == 0 {
+		return nil
+	}
+
+	ctx.Logger.Info("执行前置钩子...")
+	for _, hook := range beforeHooks {
+		if err := r.runHook(ctx, hook, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runAfterAll 运行全局后置钩子
+func (r *Recipe) runAfterAll(ctx *deployctx.DeployContext) error {
+	afterHooks := ctx.Config.Hooks["after_deploy"]
+	if len(afterHooks) == 0 {
+		return nil
+	}
+
+	ctx.Logger.Info("执行后置钩子...")
+	for _, hook := range afterHooks {
+		if err := r.runHook(ctx, hook, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runBeforeTask 运行任务前置钩子
+func (r *Recipe) runBeforeTask(ctx *deployctx.DeployContext, taskName string) error {
+	hookName := fmt.Sprintf("before_%s", taskName)
+	if hooks, exists := r.hooks[hookName]; exists && len(hooks) > 0 {
+		ctx.Logger.Infof("运行 %s 钩子...", hookName)
+		for _, hook := range hooks {
+			if err := r.runHook(ctx, hook, nil); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// runAfterTask 运行任务后置钩子
+func (r *Recipe) runAfterTask(ctx *deployctx.DeployContext, taskName string, taskErr error) error {
+	if taskErr != nil {
+		// 任务失败，运行失败钩子
+		return r.runTaskFailedHooks(ctx, taskName, taskErr)
+	}
+
+	// 任务成功，运行成功钩子
+	return r.runTaskSuccessHooks(ctx, taskName)
+}
+
+// runTaskSuccessHooks 运行任务成功后的钩子
+func (r *Recipe) runTaskSuccessHooks(ctx *deployctx.DeployContext, taskName string) error {
+	// 运行成功特定钩子
+	successHook := fmt.Sprintf("after_%s:success", taskName)
+	if hooks, exists := r.hooks[successHook]; exists {
+		for _, hook := range hooks {
+			if err := r.runHook(ctx, hook, map[string]interface{}{
+				"task":   taskName,
+				"status": "success",
+			}); err != nil {
+				ctx.Logger.Errorf("运行 %s 钩子失败: %v", successHook, err)
+			}
+		}
+	}
+
+	// 运行通用后置钩子
+	afterHook := fmt.Sprintf("after_%s", taskName)
+	if hooks, exists := r.hooks[afterHook]; exists {
+		for _, hook := range hooks {
+			if err := r.runHook(ctx, hook, map[string]interface{}{
+				"task":   taskName,
+				"status": "success",
+			}); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
 }
 
-// runHook 执行指定名称的钩子（如果存在）
-func (r *Recipe) runHook(ctx *deployctx.DeployContext, name string, extraVars map[string]interface{}) error {
-	hooks, exists := r.hooks[name]
-	if !exists || len(hooks) == 0 {
-		return nil // 没有钩子要运行
+// runTaskFailedHooks 运行任务失败后的钩子
+func (r *Recipe) runTaskFailedHooks(ctx *deployctx.DeployContext, taskName string, taskErr error) error {
+	// 运行失败特定钩子
+	failedTaskHook := fmt.Sprintf("after_%s:failed", taskName)
+	if hooks, exists := r.hooks[failedTaskHook]; exists {
+		for _, hook := range hooks {
+			if err := r.runHook(ctx, hook, map[string]interface{}{
+				"failed_task": taskName,
+				"error":       taskErr.Error(),
+			}); err != nil {
+				ctx.Logger.Errorf("运行 %s 钩子失败: %v", failedTaskHook, err)
+			}
+		}
 	}
 
+	// 运行通用后置钩子
+	afterHook := fmt.Sprintf("after_%s", taskName)
+	if hooks, exists := r.hooks[afterHook]; exists {
+		for _, hook := range hooks {
+			if err := r.runHook(ctx, hook, map[string]interface{}{
+				"failed_task": taskName,
+				"error":       taskErr.Error(),
+				"status":      "failed",
+			}); err != nil {
+				ctx.Logger.Errorf("运行 %s 钩子失败: %v", afterHook, err)
+			}
+		}
+	}
+
+	// 运行全局失败钩子
+	if hooks, exists := r.hooks["on_failed"]; exists {
+		for _, hook := range hooks {
+			if err := r.runHook(ctx, hook, map[string]interface{}{
+				"failed_task": taskName,
+				"error":       taskErr.Error(),
+			}); err != nil {
+				ctx.Logger.Errorf("运行 on_failed 钩子失败: %v", err)
+			}
+		}
+	}
+
+	return fmt.Errorf("任务 '%s' 失败: %w", taskName, taskErr)
+}
+
+// runHook 执行单个钩子
+func (r *Recipe) runHook(ctx *deployctx.DeployContext, hook string, extraVars map[string]interface{}) error {
 	// 向上下文添加额外变量
 	if extraVars != nil {
 		for k, v := range extraVars {
@@ -132,23 +252,21 @@ func (r *Recipe) runHook(ctx *deployctx.DeployContext, name string, extraVars ma
 		}
 	}
 
-	ctx.Logger.Infof("运行钩子: %s", name)
-
-	for _, hook := range hooks {
-		// 尝试查找同名的已注册任务
-		task, err := r.registry.Get(hook)
-		if err == nil {
-			// 如果是已注册任务，执行它
-			if err := task.Execute(ctx); err != nil {
-				return fmt.Errorf("钩子任务 '%s' 失败: %w", hook, err)
-			}
-		} else {
-			// 否则，将其视为命令
-			executor := NewHookExecutor(ctx)
-			if err := executor.ExecuteHook(hook); err != nil {
-				return fmt.Errorf("钩子命令 '%s' 失败: %w", hook, err)
-			}
+	// 尝试查找同名的已注册任务
+	task, err := r.registry.Get(hook)
+	if err == nil {
+		// 如果是已注册任务，执行它
+		ctx.Logger.Infof("执行钩子任务: %s", hook)
+		if err := task.Execute(ctx); err != nil {
+			return fmt.Errorf("钩子任务 '%s' 失败: %w", hook, err)
 		}
+		return nil
+	}
+
+	// 否则，将其视为命令
+	executor := NewHookExecutor(ctx)
+	if err := executor.ExecuteHook(hook); err != nil {
+		return fmt.Errorf("钩子命令 '%s' 失败: %w", hook, err)
 	}
 
 	return nil
@@ -216,12 +334,8 @@ func (e *HookExecutor) executeRemote(command string) error {
 	cmdCtx, cancel := context.WithTimeout(e.ctx.Context, 5*time.Minute)
 	defer cancel()
 
-	// 组装 ssh 参数，考虑私钥
-	sshArgs := []string{}
-	if e.ctx.StageConfig.PrivateKeyPath != "" {
-		sshArgs = append(sshArgs, "-i", e.ctx.StageConfig.PrivateKeyPath)
-	}
-	sshArgs = append(sshArgs, e.ctx.StageConfig.Server, command)
+	// 使用辅助函数构建 SSH 参数
+	sshArgs := executor.BuildSSHCommand(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Server, command)
 	e.ctx.Logger.Infof("执行远程命令: ssh %s", strings.Join(sshArgs, " "))
 	cmd := exec.CommandContext(cmdCtx, "ssh", sshArgs...)
 

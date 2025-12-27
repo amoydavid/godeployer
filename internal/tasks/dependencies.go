@@ -31,9 +31,9 @@ func (t *InstallDependenciesTask) Execute(ctx *deployctx.DeployContext) error {
 	exec := executor.NewExecutor(ctx)
 
 	// 如果配置中有自定义命令，使用它
-	taskCfg, ok := ctx.Config.Tasks["install_dependencies"]
-	if ok && taskCfg.Remote != "" {
-		return exec.RunRemoteCommand(taskCfg.Remote)
+	cmd, ok := ctx.GetTaskRemoteCmd("install_dependencies")
+	if ok {
+		return exec.RunRemoteCommand(cmd)
 	}
 
 	// 否则，尝试检测项目类型并使用默认命令

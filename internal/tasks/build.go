@@ -26,14 +26,14 @@ func (t *BuildTask) Description() string {
 
 // Execute 执行构建任务
 func (t *BuildTask) Execute(ctx *deployctx.DeployContext) error {
-	// 检查配置中是否有自定义构建命令
-	taskCfg, ok := ctx.Config.Tasks["build"]
-	if !ok || taskCfg.Local == "" {
+	// 使用辅助方法获取本地命令
+	cmd, ok := ctx.GetTaskLocalCmd("build")
+	if !ok {
 		ctx.Logger.Info("没有配置构建命令，跳过构建")
 		return nil
 	}
 
 	// 执行构建命令
 	exec := executor.NewExecutor(ctx)
-	return exec.RunLocalCommand(taskCfg.Local)
+	return exec.RunLocalCommand(cmd)
 }

@@ -44,9 +44,9 @@ func (t *RollbackTask) Execute(ctx *deployctx.DeployContext) error {
 	exec := executor.NewExecutor(ctx)
 
 	// 如果配置中有自定义命令，使用它
-	taskCfg, ok := ctx.Config.Tasks["rollback"]
-	if ok && taskCfg.Remote != "" {
-		return exec.RunRemoteCommand(taskCfg.Remote)
+	cmd, ok := ctx.GetTaskRemoteCmd("rollback")
+	if ok {
+		return exec.RunRemoteCommand(cmd)
 	}
 
 	// 否则，执行默认回滚逻辑
@@ -77,6 +77,12 @@ func (t *RollbackTask) Execute(ctx *deployctx.DeployContext) error {
 	}
 
 	// 3. 根据回滚步数选择目标版本
+	// 添加边界检查，防止数组越界
+	if t.Steps < 0 || t.Steps >= len(versions) {
+		return fmt.Errorf("回滚步数 %d 超出可用版本范围 [0, %d)，当前共有 %d 个版本",
+			t.Steps, len(versions), len(versions))
+	}
+
 	targetVersion := versions[t.Steps]
 	ctx.Logger.Info(fmt.Sprintf("回滚到版本: %s", targetVersion))
 

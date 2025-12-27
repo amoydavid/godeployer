@@ -28,7 +28,6 @@ import (
 	"deployer/internal/tasks"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"sort"
 	"syscall"
@@ -51,8 +50,8 @@ var (
 		Use:   "deployer",
 		Short: "GoDeployer - 灵活的部署工具",
 		Long:  `GoDeployer - 一个灵活、可扩展的部署自动化工具。`,
-		Run: func(cmd *cobra.Command, args []string) {
-			runDeploy()
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDeploy()
 		},
 	}
 )
@@ -79,8 +78,8 @@ func main() {
 	initCmd := &cobra.Command{
 		Use:   "init",
 		Short: "初始化一个部署配置文件",
-		Run: func(cmd *cobra.Command, args []string) {
-			initConfig()
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return initConfig()
 		},
 	}
 	RootCmd.AddCommand(initCmd)
@@ -89,8 +88,8 @@ func main() {
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "列出配置文件中定义的任务和部署阶段",
-		Run: func(cmd *cobra.Command, args []string) {
-			listTasks()
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return listTasks()
 		},
 	}
 	RootCmd.AddCommand(listCmd)
@@ -99,8 +98,8 @@ func main() {
 	rollbackCmd := &cobra.Command{
 		Use:   "rollback",
 		Short: "回滚到之前的发布版本",
-		Run: func(cmd *cobra.Command, args []string) {
-			runRollback()
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRollback()
 		},
 	}
 	rollbackCmd.Flags().IntVar(&rollbackSteps, "steps", 1, "回滚的步数，默认为1，表示回滚到上一个版本")
@@ -112,70 +111,62 @@ func main() {
 		Short: "通过 SSH 登录到远程服务器",
 		Long: `通过 SSH 登录到远程服务器，获得完整的 shell 环境。
 如果没有指定 stage，将使用默认 stage。`,
-		Run: func(cmd *cobra.Command, args []string) {
-			// 加载配置
-			cfg, err := config.LoadConfig(configFile)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "加载配置错误: %v\n", err)
-				os.Exit(1)
-			}
-
-			// 确定要使用的阶段
-			selectedStage := ""
-			if len(args) > 0 {
-				selectedStage = args[0]
-			} else {
-				selectedStage = cfg.DefaultStage
-			}
-
-			if _, exists := cfg.Stages[selectedStage]; !exists {
-				fmt.Fprintf(os.Stderr, "错误: 配置中未找到阶段 '%s'\n", selectedStage)
-				os.Exit(1)
-			}
-
-			// 创建部署上下文
-			deployCtx, err := deployctx.NewDeployContext(cmd.Context(), cfg, selectedStage, false)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "创建部署上下文错误: %v\n", err)
-				os.Exit(1)
-			}
-
-			// 构建 SSH 命令，支持私钥路径
-			sshArgs := []string{"-t"}
-			if deployCtx.StageConfig.PrivateKeyPath != "" {
-				sshArgs = append(sshArgs, "-i", deployCtx.StageConfig.PrivateKeyPath)
-			}
-			sshArgs = append(sshArgs, deployCtx.StageConfig.Server,
-				"cd "+deployCtx.StageConfig.RemoteDir+"/current 2>/dev/null || cd "+deployCtx.StageConfig.RemoteDir+"; exec $SHELL -l",
-			)
-			sshCmd := exec.Command("ssh", sshArgs...)
-			sshCmd.Stdin = os.Stdin
-			sshCmd.Stdout = os.Stdout
-			sshCmd.Stderr = os.Stderr
-
-			// 执行 SSH 命令
-			if err := sshCmd.Run(); err != nil {
-				fmt.Fprintf(os.Stderr, "SSH 连接失败: %v\n", err)
-				os.Exit(1)
-			}
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSSH(cmd, args)
 		},
 	}
 	RootCmd.AddCommand(sshCmd)
 
 	// 执行命令
 	if err := RootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "执行出错: %v\n", err)
+		// Cobra 会处理错误退出
 		os.Exit(1)
 	}
 }
 
-// 列出配置文件中定义的任务和部署阶段
-func listTasks() {
+// runSSH 执行 SSH 登录
+func runSSH(cmd *cobra.Command, args []string) error {
 	// 加载配置
 	cfg, err := config.LoadConfig(configFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "加载配置错误: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("加载配置错误: %w", err)
+	}
+
+	// 确定要使用的阶段
+	selectedStage := ""
+	if len(args) > 0 {
+		selectedStage = args[0]
+	} else {
+		selectedStage = cfg.DefaultStage
+	}
+
+	if _, exists := cfg.Stages[selectedStage]; !exists {
+		return fmt.Errorf("配置中未找到阶段 '%s'", selectedStage)
+	}
+
+	// 创建部署上下文
+	deployCtx, err := deployctx.NewDeployContext(cmd.Context(), cfg, selectedStage, false)
+	if err != nil {
+		return fmt.Errorf("创建部署上下文错误: %w", err)
+	}
+
+	// 构建 SSH 命令，支持私钥路径
+	sshArgs := []string{"-t"}
+	sshArgs = append(sshArgs, executor.BuildSSHArgs(deployCtx.StageConfig.PrivateKeyPath)...)
+	sshArgs = append(sshArgs, deployCtx.StageConfig.Server,
+		"cd "+deployCtx.StageConfig.RemoteDir+"/current 2>/dev/null || cd "+deployCtx.StageConfig.RemoteDir+"; exec $SHELL -l",
+	)
+
+	// 执行 SSH 命令
+	return executor.RunSSHCommand(sshArgs...)
+}
+
+// 列出配置文件中定义的任务和部署阶段
+func listTasks() error {
+	// 加载配置
+	cfg, err := config.LoadConfig(configFile)
+	if err != nil {
+		return fmt.Errorf("加载配置错误: %w", err)
 	}
 
 	fmt.Printf("项目: %s\n", cfg.Project)
@@ -229,10 +220,11 @@ func listTasks() {
 			fmt.Printf("  %d. %s\n", i+1, task)
 		}
 	}
+	return nil
 }
 
 // 初始化一个示例配置文件
-func initConfig() {
+func initConfig() error {
 	// 检查配置文件是否已存在
 	if _, err := os.Stat(configFile); err == nil {
 		fmt.Printf("配置文件 '%s' 已存在，要覆盖它吗？(y/n): ", configFile)
@@ -240,7 +232,7 @@ func initConfig() {
 		fmt.Scanln(&response)
 		if response != "y" && response != "Y" {
 			fmt.Println("操作已取消")
-			return
+			return nil
 		}
 	}
 
@@ -258,7 +250,7 @@ stages:
     vars:
       APP_ENV: development
       DEBUG: "true"
-  
+
   prod:
     server: prod-server.example.com
     remote_dir: /var/www/my-app-prod
@@ -280,10 +272,10 @@ options:
 tasks:
   build:
     local: npm run build
-  
+
   backup:
     remote: cp -r /var/www/app /var/www/app_backup_$(date +%Y%m%d)
-  
+
   upload-app:
     upload:
       source: ./dist
@@ -305,34 +297,34 @@ hooks:
   # 全局钩子
   before_all:
     - echo "开始部署到 {{stage}} 环境..."
-  
+
   after_all:
     - echo "部署完成！"
-  
+
   # 任务特定前置钩子
   before_build:
     - echo "准备开始构建..."
-  
+
   # 任务特定后置钩子（无论成功失败）
   after_build:
     - echo "构建过程已完成"
-  
+
   # 任务成功钩子
   after_build:success:
     - echo "构建成功完成！"
     - echo "通知团队构建成功"
-  
+
   # 任务失败钩子
   after_build:failed:
     - echo "构建失败！"
     - echo "通知团队构建失败"
-  
+
   after_upload-app:success:
     - echo "文件上传成功，新版本已位于 {{release_path}}"
-  
+
   after_backup:failed:
     - echo "备份失败，但将继续部署过程..."
-  
+
   # 全局失败钩子
   on_failed:
     - echo "部署过程中出现错误！错误信息: {{error}}"
@@ -344,21 +336,19 @@ vars:
 `
 
 	// 写入配置文件
-	err := os.WriteFile(configFile, []byte(exampleConfig), 0644)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "写入配置文件失败: %v\n", err)
-		os.Exit(1)
+	if err := os.WriteFile(configFile, []byte(exampleConfig), 0644); err != nil {
+		return fmt.Errorf("写入配置文件失败: %w", err)
 	}
 
 	fmt.Printf("示例配置已写入 '%s'\n", configFile)
+	return nil
 }
 
-func runDeploy() {
+func runDeploy() error {
 	// 加载配置
 	cfg, err := config.LoadConfig(configFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "加载配置错误: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("加载配置错误: %w", err)
 	}
 
 	// 确定要使用的阶段
@@ -368,8 +358,7 @@ func runDeploy() {
 	}
 
 	if _, exists := cfg.Stages[selectedStage]; !exists {
-		fmt.Fprintf(os.Stderr, "错误: 配置中未找到阶段 '%s'\n", selectedStage)
-		os.Exit(1)
+		return fmt.Errorf("配置中未找到阶段 '%s'", selectedStage)
 	}
 
 	// 用户确认
@@ -382,7 +371,7 @@ func runDeploy() {
 	fmt.Scanln(&response)
 	if response != "y" && response != "Y" {
 		fmt.Println("部署已取消")
-		return
+		return nil
 	}
 
 	// 创建可取消的上下文
@@ -401,8 +390,7 @@ func runDeploy() {
 	// 创建部署上下文
 	deployCtx, err := deployctx.NewDeployContext(ctx, cfg, selectedStage, dryRun)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "创建部署上下文错误: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("创建部署上下文错误: %w", err)
 	}
 
 	// 创建任务注册表
@@ -425,11 +413,11 @@ func runDeploy() {
 	}
 
 	if err := deployRecipe.Execute(deployCtx); err != nil {
-		fmt.Fprintf(os.Stderr, "部署失败: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("部署失败: %w", err)
 	}
 
 	fmt.Println("部署成功完成!")
+	return nil
 }
 
 func registerCustomTaskFromConfig(registry *registry.TaskRegistry, name string, taskCfg config.TaskConfig) {
@@ -470,12 +458,11 @@ func registerCustomTaskFromConfig(registry *registry.TaskRegistry, name string, 
 }
 
 // runRollback 执行回滚操作
-func runRollback() {
+func runRollback() error {
 	// 加载配置
 	cfg, err := config.LoadConfig(configFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "加载配置错误: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("加载配置错误: %w", err)
 	}
 
 	// 确定要使用的阶段
@@ -485,8 +472,7 @@ func runRollback() {
 	}
 
 	if _, exists := cfg.Stages[selectedStage]; !exists {
-		fmt.Fprintf(os.Stderr, "错误: 配置中未找到阶段 '%s'\n", selectedStage)
-		os.Exit(1)
+		return fmt.Errorf("配置中未找到阶段 '%s'", selectedStage)
 	}
 
 	// 用户确认
@@ -499,7 +485,7 @@ func runRollback() {
 	fmt.Scanln(&rollbackResponse)
 	if rollbackResponse != "y" && rollbackResponse != "Y" {
 		fmt.Println("回滚已取消")
-		return
+		return nil
 	}
 
 	// 创建可取消的上下文
@@ -518,8 +504,7 @@ func runRollback() {
 	// 创建部署上下文
 	deployCtx, err := deployctx.NewDeployContext(ctx, cfg, selectedStage, dryRun)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "创建部署上下文错误: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("创建部署上下文错误: %w", err)
 	}
 
 	// 创建任务注册表
@@ -531,8 +516,7 @@ func runRollback() {
 	// 获取回滚任务
 	rollbackTask, err := taskRegistry.Get("rollback")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "加载回滚任务失败: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("加载回滚任务失败: %w", err)
 	}
 
 	// 设置回滚步数
@@ -550,9 +534,9 @@ func runRollback() {
 
 	// 直接执行回滚任务
 	if err := rollbackTask.Execute(deployCtx); err != nil {
-		fmt.Fprintf(os.Stderr, "回滚失败: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("回滚失败: %w", err)
 	}
 
 	fmt.Println("回滚成功完成!")
+	return nil
 }

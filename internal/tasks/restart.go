@@ -31,9 +31,9 @@ func (t *RestartAppTask) Execute(ctx *deployctx.DeployContext) error {
 	exec := executor.NewExecutor(ctx)
 
 	// 从配置中获取重启命令
-	taskCfg, ok := ctx.Config.Tasks["restart_app"]
-	if ok && taskCfg.Remote != "" {
-		return exec.RunRemoteCommand(taskCfg.Remote)
+	cmd, ok := ctx.GetTaskRemoteCmd("restart_app")
+	if ok {
+		return exec.RunRemoteCommand(cmd)
 	}
 
 	// 如果未配置重启命令，提示用户

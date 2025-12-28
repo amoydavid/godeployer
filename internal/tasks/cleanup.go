@@ -71,9 +71,9 @@ func (t *CleanupTask) Execute(ctx *deployctx.DeployContext) error {
 	if _, err := os.Stat(legacyTempDir); err == nil {
 		// 目录存在，删除它
 		if err := os.RemoveAll(legacyTempDir); err != nil {
-			ctx.Logger.Warnf("清理遗留临时文件失败: %v", err)
+			ctx.Logger.Warnf("Failed to clean legacy temp directory: %v", err)
 		} else {
-			ctx.Logger.Infof("已清理遗留临时文件: %s", legacyTempDir)
+			ctx.Logger.Infof("Cleaned legacy temp directory: %s", legacyTempDir)
 		}
 	}
 
@@ -82,7 +82,7 @@ func (t *CleanupTask) Execute(ctx *deployctx.DeployContext) error {
 	systemTempDir := os.TempDir()
 	entries, err := os.ReadDir(systemTempDir)
 	if err != nil {
-		ctx.Logger.Warnf("读取系统临时目录失败: %v", err)
+		ctx.Logger.Warnf("Failed to read system temp directory: %v", err)
 		return nil
 	}
 
@@ -93,7 +93,7 @@ func (t *CleanupTask) Execute(ctx *deployctx.DeployContext) error {
 			tempPath := filepath.Join(systemTempDir, entry.Name())
 			// 获取目录信息，检查是否过旧（可选，这里直接删除）
 			if err := os.RemoveAll(tempPath); err != nil {
-				ctx.Logger.Warnf("清理临时目录 %s 失败: %v", tempPath, err)
+				ctx.Logger.Warnf("Failed to clean temp directory %s: %v", tempPath, err)
 			} else {
 				cleanedCount++
 			}
@@ -101,7 +101,7 @@ func (t *CleanupTask) Execute(ctx *deployctx.DeployContext) error {
 	}
 
 	if cleanedCount > 0 {
-		ctx.Logger.Infof("已清理 %d 个系统临时目录", cleanedCount)
+		ctx.Logger.Infof("Cleaned %d system temp directories", cleanedCount)
 	}
 
 	return nil

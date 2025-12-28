@@ -39,11 +39,11 @@ func (r *Recipe) Execute(ctx *deployctx.DeployContext) error {
 	if !ctx.DryRun {
 		socket, isNew, err := pool.GetMasterSocket(ctx.StageConfig.PrivateKeyPath, ctx.StageConfig.Server)
 		if err != nil {
-			ctx.Logger.Warnf("创建 SSH 连接池失败: %v，将直接连接", err)
+			ctx.Logger.Warnf("Failed to create SSH connection pool: %v, using direct connection", err)
 		} else {
 			ctx.SSHPoolSocket = socket // 将 socket 路径存储到 context 中
 			if isNew {
-				ctx.Logger.Infof("已创建 SSH 连接池: %s", socket)
+				ctx.Logger.Infof("Created SSH connection pool: %s", socket)
 			}
 		}
 	}
@@ -104,8 +104,8 @@ func (r *Recipe) runTask(ctx *deployctx.DeployContext, taskName string, current,
 	}
 
 	// 显示任务信息
-	ctx.Logger.Infof("[%d/%d] 执行任务: %s", current, total, taskName)
-	ctx.Logger.Infof("描述: %s", task.Description())
+	ctx.Logger.Infof("[%d/%d] Executing task: %s", current, total, taskName)
+	ctx.Logger.Infof("Description: %s", task.Description())
 
 	// 执行任务
 	return task.Execute(ctx)
@@ -118,7 +118,7 @@ func (r *Recipe) runBeforeAll(ctx *deployctx.DeployContext) error {
 		return nil
 	}
 
-	ctx.Logger.Info("执行前置钩子...")
+	ctx.Logger.Info("Running pre-deploy hooks...")
 	for _, hook := range beforeHooks {
 		if err := r.runHook(ctx, hook, nil); err != nil {
 			return err
@@ -134,7 +134,7 @@ func (r *Recipe) runAfterAll(ctx *deployctx.DeployContext) error {
 		return nil
 	}
 
-	ctx.Logger.Info("执行后置钩子...")
+	ctx.Logger.Info("Running post-deploy hooks...")
 	for _, hook := range afterHooks {
 		if err := r.runHook(ctx, hook, nil); err != nil {
 			return err
@@ -147,7 +147,7 @@ func (r *Recipe) runAfterAll(ctx *deployctx.DeployContext) error {
 func (r *Recipe) runBeforeTask(ctx *deployctx.DeployContext, taskName string) error {
 	hookName := fmt.Sprintf("before_%s", taskName)
 	if hooks, exists := r.hooks[hookName]; exists && len(hooks) > 0 {
-		ctx.Logger.Infof("运行 %s 钩子...", hookName)
+		ctx.Logger.Infof("Running %s hooks...", hookName)
 		for _, hook := range hooks {
 			if err := r.runHook(ctx, hook, nil); err != nil {
 				return err
@@ -178,7 +178,7 @@ func (r *Recipe) runTaskSuccessHooks(ctx *deployctx.DeployContext, taskName stri
 				"task":   taskName,
 				"status": "success",
 			}); err != nil {
-				ctx.Logger.Errorf("运行 %s 钩子失败: %v", successHook, err)
+				ctx.Logger.Errorf("Failed to run %s hook: %v", successHook, err)
 			}
 		}
 	}
@@ -209,7 +209,7 @@ func (r *Recipe) runTaskFailedHooks(ctx *deployctx.DeployContext, taskName strin
 				"failed_task": taskName,
 				"error":       taskErr.Error(),
 			}); err != nil {
-				ctx.Logger.Errorf("运行 %s 钩子失败: %v", failedTaskHook, err)
+				ctx.Logger.Errorf("Failed to run %s hook: %v", failedTaskHook, err)
 			}
 		}
 	}
@@ -223,7 +223,7 @@ func (r *Recipe) runTaskFailedHooks(ctx *deployctx.DeployContext, taskName strin
 				"error":       taskErr.Error(),
 				"status":      "failed",
 			}); err != nil {
-				ctx.Logger.Errorf("运行 %s 钩子失败: %v", afterHook, err)
+				ctx.Logger.Errorf("Failed to run %s hook: %v", afterHook, err)
 			}
 		}
 	}
@@ -235,7 +235,7 @@ func (r *Recipe) runTaskFailedHooks(ctx *deployctx.DeployContext, taskName strin
 				"failed_task": taskName,
 				"error":       taskErr.Error(),
 			}); err != nil {
-				ctx.Logger.Errorf("运行 on_failed 钩子失败: %v", err)
+				ctx.Logger.Errorf("Failed to run on_failed hook: %v", err)
 			}
 		}
 	}
@@ -256,7 +256,7 @@ func (r *Recipe) runHook(ctx *deployctx.DeployContext, hook string, extraVars ma
 	task, err := r.registry.Get(hook)
 	if err == nil {
 		// 如果是已注册任务，执行它
-		ctx.Logger.Infof("执行钩子任务: %s", hook)
+		ctx.Logger.Infof("Executing hook task: %s", hook)
 		if err := task.Execute(ctx); err != nil {
 			return fmt.Errorf("钩子任务 '%s' 失败: %w", hook, err)
 		}
@@ -292,7 +292,7 @@ func (e *HookExecutor) ExecuteHook(command string) error {
 		cmd := strings.TrimPrefix(resolvedCommand, "remote:")
 		cmd = strings.TrimSpace(cmd)
 
-		e.ctx.Logger.Infof("运行远程钩子: %s", cmd)
+		e.ctx.Logger.Infof("Running remote hook: %s", cmd)
 		if e.ctx.DryRun {
 			return nil
 		}
@@ -302,7 +302,7 @@ func (e *HookExecutor) ExecuteHook(command string) error {
 	}
 
 	// 否则，它是本地命令
-	e.ctx.Logger.Infof("运行本地钩子: %s", resolvedCommand)
+	e.ctx.Logger.Infof("Running local hook: %s", resolvedCommand)
 	if e.ctx.DryRun {
 		return nil
 	}
@@ -336,7 +336,7 @@ func (e *HookExecutor) executeRemote(command string) error {
 
 	// 使用辅助函数构建 SSH 参数
 	sshArgs := executor.BuildSSHCommand(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Server, command)
-	e.ctx.Logger.Infof("执行远程命令: ssh %s", strings.Join(sshArgs, " "))
+	e.ctx.Logger.Infof("Executing remote command: ssh %s", strings.Join(sshArgs, " "))
 	cmd := exec.CommandContext(cmdCtx, "ssh", sshArgs...)
 
 	cmd.Stdout = os.Stdout

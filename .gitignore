@@ -5,3 +5,5 @@ deploy.yaml
 /deployer
 cmd/deployer/deployer
 /build
+/bin
+.claude

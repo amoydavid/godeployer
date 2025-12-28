@@ -14,8 +14,8 @@ import (
 
 // Executor 处理命令执行
 type Executor struct {
-	ctx          *deployctx.DeployContext
-	enablePool   bool // 是否启用 SSH 连接池
+	ctx           *deployctx.DeployContext
+	enablePool    bool   // 是否启用 SSH 连接池
 	currentSocket string // 当前使用的 ControlMaster socket
 }
 
@@ -111,9 +111,9 @@ func getSystemShell() (string, []string) {
 func (e *Executor) RunLocalCommand(command string) error {
 	resolvedCommand := e.ctx.ResolveVar(command)
 
-	e.ctx.Logger.Infof("执行本地命令: %s", resolvedCommand)
+	e.ctx.Logger.Infof("Executing local command: %s", resolvedCommand)
 	if e.ctx.DryRun {
-		e.ctx.Logger.Infof("[模拟运行] 将执行: %s", resolvedCommand)
+		e.ctx.Logger.Infof("[Dry-run] Would execute: %s", resolvedCommand)
 		return nil
 	}
 
@@ -137,9 +137,9 @@ func (e *Executor) RunLocalCommand(command string) error {
 func (e *Executor) RunLocalCommandWithOutput(command string) (string, error) {
 	resolvedCommand := e.ctx.ResolveVar(command)
 
-	e.ctx.Logger.Infof("执行本地命令: %s", resolvedCommand)
+	e.ctx.Logger.Infof("Executing local command: %s", resolvedCommand)
 	if e.ctx.DryRun {
-		e.ctx.Logger.Infof("[模拟运行] 将执行: %s", resolvedCommand)
+		e.ctx.Logger.Infof("[Dry-run] Would execute: %s", resolvedCommand)
 		return "[模拟运行输出]", nil
 	}
 
@@ -161,9 +161,9 @@ func (e *Executor) RunLocalCommandWithOutput(command string) (string, error) {
 func (e *Executor) RunRemoteCommand(command string) error {
 	resolvedCommand := e.ctx.ResolveVar(command)
 
-	e.ctx.Logger.Infof("执行远程命令: %s", resolvedCommand)
+	e.ctx.Logger.Infof("Executing remote command: %s", resolvedCommand)
 	if e.ctx.DryRun {
-		e.ctx.Logger.Infof("[模拟运行] 将在 %s 上执行: %s",
+		e.ctx.Logger.Infof("[Dry-run] Would execute on %s: %s",
 			e.ctx.StageConfig.Server, resolvedCommand)
 		return nil
 	}
@@ -185,7 +185,7 @@ func (e *Executor) RunRemoteCommand(command string) error {
 
 	sshArgs = append(sshArgs, e.ctx.StageConfig.Server, shellCmd)
 
-	e.ctx.Logger.Infof("执行远程命令: ssh %s", strings.Join(sshArgs, " "))
+	e.ctx.Logger.Infof("Executing remote command: ssh %s", strings.Join(sshArgs, " "))
 	cmd := exec.CommandContext(cmdCtx, "ssh", sshArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -201,9 +201,9 @@ func (e *Executor) RunRemoteCommand(command string) error {
 func (e *Executor) RunRemoteCommandWithOutput(command string) (string, error) {
 	resolvedCommand := e.ctx.ResolveVar(command)
 
-	e.ctx.Logger.Infof("执行远程命令: %s", resolvedCommand)
+	e.ctx.Logger.Infof("Executing remote command: %s", resolvedCommand)
 	if e.ctx.DryRun {
-		e.ctx.Logger.Infof("[模拟运行] 将在 %s 上执行: %s",
+		e.ctx.Logger.Infof("[Dry-run] Would execute on %s: %s",
 			e.ctx.StageConfig.Server, resolvedCommand)
 		return "[模拟运行输出]", nil
 	}
@@ -225,7 +225,7 @@ func (e *Executor) RunRemoteCommandWithOutput(command string) (string, error) {
 
 	sshArgs = append(sshArgs, e.ctx.StageConfig.Server, shellCmd)
 
-	e.ctx.Logger.Infof("执行远程命令: ssh %s", strings.Join(sshArgs, " "))
+	e.ctx.Logger.Infof("Executing remote command: ssh %s", strings.Join(sshArgs, " "))
 	cmd := exec.CommandContext(cmdCtx, "ssh", sshArgs...)
 	output, err := cmd.CombinedOutput()
 	if cmdCtx.Err() == context.DeadlineExceeded {
@@ -252,11 +252,11 @@ func (e *Executor) UploadDirectory(source, destination string, options string) e
 		return fmt.Errorf("源路径不存在: %w", err)
 	}
 
-	e.ctx.Logger.Infof("上传从 %s 到 %s:%s",
+	e.ctx.Logger.Infof("Uploading from %s to %s:%s",
 		resolvedSource, e.ctx.StageConfig.Server, resolvedDest)
 
 	if e.ctx.DryRun {
-		e.ctx.Logger.Infof("[模拟运行] 将上传 %s 到 %s:%s",
+		e.ctx.Logger.Infof("[Dry-run] Would upload %s to %s:%s",
 			resolvedSource, e.ctx.StageConfig.Server, resolvedDest)
 		return nil
 	}

@@ -21,9 +21,11 @@ package logger
 import (
 	"fmt"
 	"io"
-	"time"
+	"os"
 
 	"github.com/fatih/color"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // LogLevel 表示日志级别
@@ -42,19 +44,67 @@ const (
 	ERROR
 )
 
-// Logger 是一个简单的日志记录器
+// Logger 是一个结构化日志记录器，基于 zap
 type Logger struct {
-	writer  io.Writer
-	colored bool
-	level   LogLevel
+	zapLogger *zap.Logger
+	sugar     *zap.SugaredLogger
+	colored   bool
+	level     LogLevel
 }
 
-// NewLogger 创建一个新的日志记录器
+// NewLogger 创建一个新的结构化日志记录器
 func NewLogger(writer io.Writer, colored bool) *Logger {
+	// Determine log level
+	var zapLevel zapcore.Level
+	zapLevel = zapcore.InfoLevel
+
+	// Create encoder config
+	encoderConfig := zapcore.EncoderConfig{
+		TimeKey:        "time",
+		LevelKey:       "level",
+		NameKey:        "logger",
+		CallerKey:      "caller",
+		MessageKey:     "msg",
+		StacktraceKey:  "stacktrace",
+		LineEnding:     zapcore.DefaultLineEnding,
+		EncodeLevel:    zapcore.CapitalLevelEncoder,
+		EncodeTime:     zapcore.ISO8601TimeEncoder,
+		EncodeDuration: zapcore.SecondsDurationEncoder,
+		EncodeCaller:   zapcore.ShortCallerEncoder,
+	}
+
+	// Create console encoder for human-readable output
+	consoleEncoder := zapcore.NewConsoleEncoder(encoderConfig)
+
+	// Create writer (use provided writer or stdout)
+	var writeSyncer zapcore.WriteSyncer
+	if writer != nil {
+		// Check if writer implements Sync() method
+		type syncer interface {
+			io.Writer
+			Sync() error
+		}
+		if w, ok := writer.(syncer); ok {
+			writeSyncer = zapcore.AddSync(w)
+		} else {
+			// Writer doesn't have Sync, wrap it
+			writeSyncer = zapcore.Lock(zapcore.AddSync(writer))
+		}
+	} else {
+		writeSyncer = zapcore.AddSync(os.Stdout)
+	}
+
+	// Build core
+	core := zapcore.NewCore(consoleEncoder, writeSyncer, zapLevel)
+
+	// Create logger
+	zapLogger := zap.New(core, zap.AddCallerSkip(1), zap.AddStacktrace(zapcore.ErrorLevel))
+
 	return &Logger{
-		writer:  writer,
-		colored: colored,
-		level:   INFO,
+		zapLogger: zapLogger,
+		sugar:     zapLogger.Sugar(),
+		colored:   colored,
+		level:     INFO,
 	}
 }
 
@@ -63,93 +113,137 @@ func (l *Logger) SetLevel(level LogLevel) {
 	l.level = level
 }
 
-// log 记录一条消息
-func (l *Logger) log(level LogLevel, format string, args ...interface{}) {
+// WithFields returns a logger with structured fields
+func (l *Logger) WithFields(fields map[string]interface{}) *Logger {
+	args := make([]interface{}, 0, len(fields)*2)
+	for k, v := range fields {
+		args = append(args, k, v)
+	}
+	newSugar := l.sugar.With(args...)
+	return &Logger{
+		zapLogger: l.zapLogger,
+		sugar:     newSugar,
+		colored:   l.colored,
+		level:     l.level,
+	}
+}
+
+// formatWithColor formats message with color if enabled
+func (l *Logger) formatWithColor(level LogLevel, message string) string {
+	if !l.colored {
+		return message
+	}
+
+	switch level {
+	case DEBUG:
+		return color.BlueString(message)
+	case INFO:
+		return color.CyanString(message)
+	case SUCCESS:
+		return color.GreenString(message)
+	case WARN:
+		return color.YellowString(message)
+	case ERROR:
+		return color.RedString(message)
+	default:
+		return message
+	}
+}
+
+// log 记录一条结构化消息
+func (l *Logger) log(level LogLevel, msg string, args ...interface{}) {
 	if level < l.level {
 		return
 	}
 
-	timestamp := time.Now().Format("15:04:05")
-	var prefix string
+	formattedMsg := l.formatWithColor(level, msg)
 
-	if l.colored {
-		switch level {
-		case DEBUG:
-			prefix = color.BlueString("[DEBUG]")
-		case INFO:
-			prefix = color.CyanString("[INFO]")
-		case SUCCESS:
-			prefix = color.GreenString("[SUCCESS]")
-		case WARN:
-			prefix = color.YellowString("[WARN]")
-		case ERROR:
-			prefix = color.RedString("[ERROR]")
+	switch level {
+	case DEBUG:
+		if len(args) == 0 {
+			l.sugar.Debug(formattedMsg)
+		} else {
+			l.sugar.Debugf(formattedMsg, args...)
 		}
-	} else {
-		switch level {
-		case DEBUG:
-			prefix = "[DEBUG]"
-		case INFO:
-			prefix = "[INFO]"
-		case SUCCESS:
-			prefix = "[SUCCESS]"
-		case WARN:
-			prefix = "[WARN]"
-		case ERROR:
-			prefix = "[ERROR]"
+	case INFO:
+		if len(args) == 0 {
+			l.sugar.Info(formattedMsg)
+		} else {
+			l.sugar.Infof(formattedMsg, args...)
+		}
+	case SUCCESS:
+		// SUCCESS maps to INFO level in zap but with green color
+		if len(args) == 0 {
+			l.sugar.Info(formattedMsg)
+		} else {
+			l.sugar.Infof(formattedMsg, args...)
+		}
+	case WARN:
+		if len(args) == 0 {
+			l.sugar.Warn(formattedMsg)
+		} else {
+			l.sugar.Warnf(formattedMsg, args...)
+		}
+	case ERROR:
+		if len(args) == 0 {
+			l.sugar.Error(formattedMsg)
+		} else {
+			l.sugar.Errorf(formattedMsg, args...)
 		}
 	}
-
-	message := fmt.Sprintf(format, args...)
-	fmt.Fprintf(l.writer, "%s %s %s\n", timestamp, prefix, message)
 }
 
-// Debug 记录一条调试消息
+// Debug records a debug message
 func (l *Logger) Debug(message string) {
 	l.log(DEBUG, message)
 }
 
-// Debugf 使用格式记录一条调试消息
+// Debugf records a formatted debug message
 func (l *Logger) Debugf(format string, args ...interface{}) {
-	l.log(DEBUG, format, args...)
+	l.log(DEBUG, fmt.Sprintf(format, args...))
 }
 
-// Info 记录一条信息消息
+// Info records an info message
 func (l *Logger) Info(message string) {
 	l.log(INFO, message)
 }
 
-// Infof 使用格式记录一条信息消息
+// Infof records a formatted info message
 func (l *Logger) Infof(format string, args ...interface{}) {
-	l.log(INFO, format, args...)
+	l.log(INFO, fmt.Sprintf(format, args...))
 }
 
-// Success 记录一条成功消息
+// Success records a success message
 func (l *Logger) Success(message string) {
 	l.log(SUCCESS, message)
 }
 
-// Successf 使用格式记录一条成功消息
+// Successf records a formatted success message
 func (l *Logger) Successf(format string, args ...interface{}) {
-	l.log(SUCCESS, format, args...)
+	l.log(SUCCESS, fmt.Sprintf(format, args...))
 }
 
-// Warn 记录一条警告消息
+// Warn records a warning message
 func (l *Logger) Warn(message string) {
 	l.log(WARN, message)
 }
 
-// Warnf 使用格式记录一条警告消息
+// Warnf records a formatted warning message
 func (l *Logger) Warnf(format string, args ...interface{}) {
-	l.log(WARN, format, args...)
+	l.log(WARN, fmt.Sprintf(format, args...))
 }
 
-// Error 记录一条错误消息
+// Error records an error message
 func (l *Logger) Error(message string) {
 	l.log(ERROR, message)
 }
 
-// Errorf 使用格式记录一条错误消息
+// Errorf records a formatted error message
 func (l *Logger) Errorf(format string, args ...interface{}) {
-	l.log(ERROR, format, args...)
+	l.log(ERROR, fmt.Sprintf(format, args...))
+}
+
+// Sync flushes any buffered log entries
+func (l *Logger) Sync() error {
+	return l.zapLogger.Sync()
 }

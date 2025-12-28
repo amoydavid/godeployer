@@ -3,16 +3,16 @@
  * Copyright (C) 2025-2025 amoydavid
  *
  * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
+ * it under the terms of the GNU General Public License as published
  * by the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
+ * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
+ * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
@@ -22,6 +22,7 @@ import (
 	"context"
 	"deployer/internal/config"
 	deployctx "deployer/internal/context"
+	"deployer/internal/example"
 	"deployer/internal/executor"
 	"deployer/internal/recipe"
 	"deployer/internal/registry"
@@ -116,6 +117,104 @@ func main() {
 		},
 	}
 	RootCmd.AddCommand(sshCmd)
+
+	// 添加 example 子命令
+	exampleCmd := &cobra.Command{
+		Use:   "example <filename>",
+		Short: "Generate interactive example configuration file",
+		Long: `Generate an example deployment configuration file through interactive menus.
+
+This command will guide you through creating a customized deployment configuration
+by asking you a series of questions about your project.
+
+CONFIGURATION COMPLEXITY LEVELS:
+
+  simple   - Minimal configuration for static sites or simple applications
+             Includes: basic project info, dev/prod stages, simple recipe
+
+  standard - Typical web application configuration
+             Includes: tasks, build commands, shared directories/files,
+                      standard deployment recipe, basic hooks
+
+  advanced - Multi-environment configuration with complex hooks
+             Includes: dev/staging/prod stages, backup tasks,
+                      migration tasks, advanced hooks (success/failed),
+                      shared resources, environment-specific variables
+
+  full     - Complete demonstration of all features
+             Includes: everything from advanced plus comprehensive
+                      documentation, notification integrations,
+                      all available configuration options
+
+SUPPORTED PROJECT TYPES:
+
+  nodejs  - Node.js applications (npm build)
+  go      - Go applications (go build)
+  python  - Python applications (python -m build)
+  php     - PHP applications (composer install)
+  static  - Static websites (no build needed)
+  generic - Generic/custom projects
+
+EXAMPLES:
+
+  # Generate an interactive configuration with prompts
+  deployer example deploy.yaml
+
+  # The command will ask you to:
+  # 1. Choose complexity level (simple/standard/advanced/full)
+  # 2. Select project type (nodejs/go/python/php/static/generic)
+  # 3. Whether to include detailed comments (yes/no)
+
+OUTPUT FILE STRUCTURE:
+
+  project: my-app          # Project name
+  default_stage: dev        # Default deployment environment
+
+  stages:                   # Deployment environments
+    dev:
+      server: server.com
+      remote_dir: /var/www/app
+      keep_releases: 3
+      private_key: ~/.ssh/id_rsa
+      vars:                  # Environment variables
+        APP_ENV: development
+
+  options:                  # Global options
+    release_dir_format: "releases/%Y%m%d%H%M%S"
+    shared_dirs:            # Directories shared across releases
+      - logs
+      - uploads
+    shared_files:           # Files shared across releases
+      - .env
+
+  tasks:                    # Custom deployment tasks
+    build:
+      local: npm run build
+
+  recipe:                   # Deployment workflow steps
+    - build
+    - update_code
+    - symlink_release
+    - cleanup
+
+  hooks:                    # Lifecycle hooks
+    before_all:
+      - echo "Starting deployment"
+    after_build:success:
+      - echo "Build successful!"
+    on_failed:
+      - echo "Deployment failed"
+
+  vars:                     # Global variables
+    app_name: my-app
+    node_version: "18"
+
+For more information, visit: https://github.com/yourusername/godeployer`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return example.Run(args)
+		},
+	}
+	RootCmd.AddCommand(exampleCmd)
 
 	// 执行命令
 	if err := RootCmd.Execute(); err != nil {

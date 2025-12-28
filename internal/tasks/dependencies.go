@@ -66,6 +66,6 @@ func (t *InstallDependenciesTask) Execute(ctx *deployctx.DeployContext) error {
 	}
 
 	// 如果无法检测项目类型，跳过安装
-	ctx.Logger.Info("无法检测项目类型或没有依赖需要安装，跳过")
+	ctx.Logger.Info("Unable to detect project type or no dependencies to install, skipping")
 	return nil
 }

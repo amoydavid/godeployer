@@ -44,7 +44,7 @@ func (t *PublishReleaseTask) Execute(ctx *deployctx.DeployContext) error {
 		return err
 	}
 
-	ctx.Logger.Success("发布配置成功，共享目录和文件已设置")
+	ctx.Logger.Success("Release configuration successful, shared directories and files have been set up")
 	return nil
 }
 

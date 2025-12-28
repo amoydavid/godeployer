@@ -29,7 +29,7 @@ func (t *BuildTask) Execute(ctx *deployctx.DeployContext) error {
 	// 使用辅助方法获取本地命令
 	cmd, ok := ctx.GetTaskLocalCmd("build")
 	if !ok {
-		ctx.Logger.Info("没有配置构建命令，跳过构建")
+		ctx.Logger.Info("No build command configured, skipping build")
 		return nil
 	}
 

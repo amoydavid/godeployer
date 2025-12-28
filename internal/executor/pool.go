@@ -10,7 +10,7 @@ import (
 
 // SSHPool 管理 SSH 连接池（基于 OpenSSH ControlMaster）
 type SSHPool struct {
-	mu     sync.Mutex
+	mu      sync.Mutex
 	sockets map[string]string // server -> socket path
 }
 
@@ -52,7 +52,7 @@ func (p *SSHPool) createMasterSocket(privateKeyPath, server string) (string, err
 	// ssh -fN -S <socket> -o ControlMaster=yes -o ControlPersist=yes <server>
 	args := BuildSSHArgs(privateKeyPath)
 	args = append(args,
-		"-fN", // 后台执行，不执行远程命令
+		"-fN",            // 后台执行，不执行远程命令
 		"-S", socketPath, // 指定 socket 路径
 		"-o", "ControlMaster=yes", // 启用 ControlMaster
 		"-o", "ControlPersist=10m", // 连接保持 10 分钟

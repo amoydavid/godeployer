@@ -10,6 +10,8 @@ import (
 	"time"
 
 	deployctx "deployer/internal/context"
+
+	"al.essio.dev/pkg/shellescape"
 )
 
 // Executor 处理命令执行
@@ -124,7 +126,46 @@ func BuildSCPInlineArgs(privateKeyPath string, port int) string {
 	return args
 }
 
-// getSystemShell 根据操作系统返回合适的 shell 命令
+// buildEnvVars 从上下文变量构建环境变量列表
+func buildEnvVars(vars map[string]interface{}) []string {
+	envVars := make([]string, 0, len(vars))
+
+	for name, value := range vars {
+		var strValue string
+		switch v := value.(type) {
+		case string:
+			strValue = v
+		default:
+			strValue = fmt.Sprintf("%v", v)
+		}
+		envVars = append(envVars, fmt.Sprintf("%s=%s", name, strValue))
+	}
+
+	return envVars
+}
+
+// buildEnvExports 构建环境变量导出命令字符串
+func buildEnvExports(vars map[string]interface{}) string {
+	if len(vars) == 0 {
+		return ""
+	}
+
+	var exports []string
+	for name, value := range vars {
+		var strValue string
+		switch v := value.(type) {
+		case string:
+			strValue = shellescape.Quote(v)
+		default:
+			strValue = shellescape.Quote(fmt.Sprintf("%v", v))
+		}
+		exports = append(exports, fmt.Sprintf("export %s=%s", name, strValue))
+	}
+
+	return strings.Join(exports, "; ") + "; "
+}
+
+// getSystemShell 获取系统shell根据操作系统返回合适的 shell 命令
 func getSystemShell() (string, []string) {
 	switch runtime.GOOS {
 	case "windows":
@@ -150,6 +191,10 @@ func (e *Executor) RunLocalCommand(command string) error {
 
 	shell, args := getSystemShell()
 	cmd := exec.CommandContext(cmdCtx, shell, append(args, resolvedCommand)...)
+
+	// 设置环境变量：继承当前环境变量 + 添加配置中的变量
+	cmd.Env = append(os.Environ(), buildEnvVars(e.ctx.Vars)...)
+
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -176,6 +221,10 @@ func (e *Executor) RunLocalCommandWithOutput(command string) (string, error) {
 
 	shell, args := getSystemShell()
 	cmd := exec.CommandContext(cmdCtx, shell, append(args, resolvedCommand)...)
+
+	// 设置环境变量：继承当前环境变量 + 添加配置中的变量
+	cmd.Env = append(os.Environ(), buildEnvVars(e.ctx.Vars)...)
+
 	output, err := cmd.CombinedOutput()
 
 	if cmdCtx.Err() == context.DeadlineExceeded {
@@ -199,8 +248,11 @@ func (e *Executor) RunRemoteCommand(command string) error {
 	cmdCtx, cancel := context.WithTimeout(e.ctx.Context, defaultTimeout)
 	defer cancel()
 
-	// 使用登录 shell 执行命令
-	shellCmd := fmt.Sprintf("exec bash -l -c '%s'", resolvedCommand)
+	// 构建环境变量导出命令并添加到用户命令前
+	envExports := buildEnvExports(e.ctx.Vars)
+
+	// 使用登录 shell 执行命令，先导出环境变量
+	shellCmd := fmt.Sprintf("exec bash -l -c '%s%s'", envExports, resolvedCommand)
 
 	// 构建基础 SSH 参数
 	sshArgs := BuildSSHArgs(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Port)
@@ -239,8 +291,11 @@ func (e *Executor) RunRemoteCommandWithOutput(command string) (string, error) {
 	cmdCtx, cancel := context.WithTimeout(e.ctx.Context, defaultTimeout)
 	defer cancel()
 
-	// 使用登录 shell 执行命令
-	shellCmd := fmt.Sprintf("exec $SHELL -l -c '%s'", resolvedCommand)
+	// 构建环境变量导出命令并添加到用户命令前
+	envExports := buildEnvExports(e.ctx.Vars)
+
+	// 使用登录 shell 执行命令，先导出环境变量
+	shellCmd := fmt.Sprintf("exec $SHELL -l -c '%s%s'", envExports, resolvedCommand)
 
 	// 构建基础 SSH 参数
 	sshArgs := BuildSSHArgs(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Port)

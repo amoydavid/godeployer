@@ -226,33 +226,49 @@ func generateStagesConfig(complexity templateComplexity, includeComments bool) s
 	if includeComments {
 		content += "# ====================\n"
 		content += "# Deployment Stages (Environments) Configuration\n"
-		content += "# ====================\n\n"
+		content += "# ====================\n"
+		content += "# Each stage represents a deployment environment (dev, staging, prod, etc.)\n"
+		content += "#\n"
+		content += "# Stage options:\n"
+		content += "#   server       - SSH server address (user@server or just server)\n"
+		content += "#   remote_dir   - Base directory for deployment on remote server\n"
+		content += "#   keep_releases - Number of releases to keep (old ones are auto-cleaned)\n"
+		content += "#   private_key  - Path to SSH private key (optional, uses default if not set)\n"
+		content += "#   port         - SSH port (optional, default: 22)\n"
+		content += "#   user         - SSH user (optional, default: current user)\n"
+		content += "#   vars         - Environment-specific variables\n\n"
 	}
 
 	content += "stages:\n"
 
 	// dev environment
 	if includeComments {
-		content += "  # Development environment configuration\n"
+		content += "  # Development environment\n"
 	}
 	content += "  dev:\n"
 	content += "    server: dev-server.example.com\n"
 	content += "    remote_dir: /var/www/app-dev\n"
 	content += "    keep_releases: 3\n"
 	if complexity == advanced || complexity == full {
+		if includeComments {
+			content += "    # SSH connection settings\n"
+		}
 		content += "    private_key: ~/.ssh/id_rsa\n"
+		content += "    port: 22\n"
+		content += "    user: deploy\n"
 	}
 	if includeComments {
-		content += "    # Development-specific variables\n"
+		content += "    # Environment variables accessible in tasks and hooks\n"
 	}
 	content += "    vars:\n"
 	content += "      APP_ENV: development\n"
-	content += "      DEBUG: \"true\"\n\n"
+	content += "      DEBUG: \"true\"\n"
+	content += "      LOG_LEVEL: debug\n\n"
 
 	// staging environment (only for advanced and full)
 	if complexity == advanced || complexity == full {
 		if includeComments {
-			content += "  # Staging environment configuration\n"
+			content += "  # Staging environment (pre-production testing)\n"
 		}
 		content += "  staging:\n"
 		content += "    server: staging-server.example.com\n"
@@ -261,12 +277,13 @@ func generateStagesConfig(complexity templateComplexity, includeComments bool) s
 		content += "    private_key: ~/.ssh/id_rsa\n"
 		content += "    vars:\n"
 		content += "      APP_ENV: staging\n"
-		content += "      DEBUG: \"false\"\n\n"
+		content += "      DEBUG: \"false\"\n"
+		content += "      LOG_LEVEL: info\n\n"
 	}
 
 	// prod environment
 	if includeComments {
-		content += "  # Production environment configuration\n"
+		content += "  # Production environment\n"
 	}
 	content += "  prod:\n"
 	content += "    server: prod-server.example.com\n"
@@ -274,13 +291,16 @@ func generateStagesConfig(complexity templateComplexity, includeComments bool) s
 	content += "    keep_releases: 5\n"
 	if complexity == advanced || complexity == full {
 		content += "    private_key: ~/.ssh/id_rsa\n"
+		content += "    port: 22\n"
+		content += "    user: deploy\n"
 	}
 	if includeComments {
-		content += "    # Production-specific variables\n"
+		content += "    # Production variables\n"
 	}
 	content += "    vars:\n"
 	content += "      APP_ENV: production\n"
-	content += "      DEBUG: \"false\"\n\n"
+	content += "      DEBUG: \"false\"\n"
+	content += "      LOG_LEVEL: warn\n\n"
 
 	return content
 }
@@ -292,31 +312,40 @@ func generateOptionsConfig(complexity templateComplexity, includeComments bool) 
 	if includeComments {
 		content += "# ====================\n"
 		content += "# Global Options Configuration\n"
-		content += "# ====================\n\n"
+		content += "# ====================\n"
+		content += "# These options apply to all deployment stages\n\n"
 	}
 
 	content += "options:\n"
 
 	if includeComments {
-		content += "  # Release directory naming format (supports strftime format)\n"
+		content += "  # Release directory naming format\n"
+		content += "  # Supports strftime format specifiers:\n"
+		content += "  #   %Y - 4-digit year, %m - month (01-12), %d - day (01-31)\n"
+		content += "  #   %H - hour (00-23), %M - minute (00-59), %S - second (00-59)\n"
 	}
 	content += "  release_dir_format: \"releases/%Y%m%d%H%M%S\"\n\n"
 
 	if complexity != simple {
 		if includeComments {
-			content += "  # Shared directories (shared across all releases)\n"
-			content += "  # These directories will be moved from release to shared directory on first deployment\n"
-			content += "  # Subsequent deployments will create symlinks to shared directory\n"
+			content += "  # Shared directories - persist across deployments\n"
+			content += "  # On first deployment: moved from release to shared/\n"
+			content += "  # On subsequent deployments: symlinked from shared/ to release/\n"
+			content += "  # Common use cases: logs, user uploads, cache, session storage\n"
 		}
 		content += "  shared_dirs:\n"
 		content += "    - logs\n"
-		content += "    - uploads\n\n"
+		content += "    - uploads\n"
+		content += "    - storage\n\n"
 
 		if includeComments {
-			content += "  # Shared files (shared across all releases)\n"
+			content += "  # Shared files - persist across deployments\n"
+			content += "  # Useful for configuration files that shouldn't be overwritten\n"
+			content += "  # Common use cases: .env files, config files\n"
 		}
 		content += "  shared_files:\n"
-		content += "    - .env\n\n"
+		content += "    - .env\n"
+		content += "    - config/database.yml\n\n"
 	}
 
 	return content
@@ -329,7 +358,17 @@ func generateTasksConfig(complexity templateComplexity, projType projectType, in
 	if includeComments {
 		content += "# ====================\n"
 		content += "# Custom Tasks Configuration\n"
-		content += "# ====================\n\n"
+		content += "# ====================\n"
+		content += "# Tasks can be one of three types:\n"
+		content += "# 1. local:  Run commands on your local machine before deployment\n"
+		content += "# 2. remote: Run commands on the remote server after deployment\n"
+		content += "# 3. upload: Upload files/directories from local to remote\n"
+		content += "#\n"
+		content += "# Available variables:\n"
+		content += "#   {{release_path}}  - Path to the current release directory\n"
+		content += "#   {{remote_dir}}    - Base remote directory path\n"
+		content += "#   {{stage}}         - Current deployment stage\n"
+		content += "#   {{project}}       - Project name\n\n"
 	}
 
 	content += "tasks:\n"
@@ -337,7 +376,7 @@ func generateTasksConfig(complexity templateComplexity, projType projectType, in
 	// Generate build task based on project type
 	if complexity != simple {
 		if includeComments {
-			content += "  # Local build task\n"
+			content += "  # Local build task - runs on your machine\n"
 		}
 		switch projType {
 		case nodejs:
@@ -363,29 +402,37 @@ func generateTasksConfig(complexity templateComplexity, projType projectType, in
 
 	if complexity == advanced || complexity == full {
 		if includeComments {
-			content += "  # Backup task\n"
+			content += "  # Remote task example - runs on server after deployment\n"
+			content += "  # Using pipe | for multi-line commands\n"
 		}
-		content += "  backup:\n"
+		content += "  install-deps:\n"
 		content += "    remote: |\n"
-		content += "      if [ -d {{remote_dir}}/current ]; then\n"
-		content += "        cp -r {{remote_dir}}/current {{remote_dir}}/backups/backup_$(date +%Y%m%d_%H%M%S)\n"
-		content += "      fi\n\n"
+		content += "      cd {{release_path}}\n"
+		content += "      npm install --production\n\n"
 
 		if includeComments {
-			content += "  # Upload task\n"
+			content += "  # Upload task - sync files to remote server\n"
+			content += "  # source: local path, dest: remote path, options: rsync options\n"
 		}
-		content += "  upload-app:\n"
+		content += "  upload-assets:\n"
 		content += "    upload:\n"
 		content += "      source: ./dist\n"
 		content += "      dest: \"{{release_path}}\"\n"
-		content += "      options: \"--delete\"\n\n"
+		content += "      options: \"--delete --exclude=node_modules\"\n\n"
 
 		if includeComments {
-			content += "  # Database migration task\n"
+			content += "  # Multiple task types in one task\n"
 		}
 		content += "  migrate:\n"
+		content += "    local: echo 'Running database migration...'\n"
 		content += "    remote: |\n"
 		content += "      cd {{release_path}} && php artisan migrate --force\n\n"
+
+		if includeComments {
+			content += "  # Another remote task example\n"
+		}
+		content += "  restart-server:\n"
+		content += "    remote: sudo systemctl restart nginx\n\n"
 	}
 
 	return content
@@ -398,66 +445,80 @@ func generateRecipeConfig(complexity templateComplexity, includeComments bool) s
 	if includeComments {
 		content += "# ====================\n"
 		content += "# Deployment Recipe Configuration\n"
-		content += "# ====================\n\n"
+		content += "# ====================\n"
+		content += "# Recipe defines the deployment workflow steps.\n"
+		content += "# You can use both built-in tasks and custom tasks defined above.\n"
+		content += "#\n"
+		content += "# Available built-in tasks:\n"
+		content += "#   update_code      - Upload code to release directory via rsync\n"
+		content += "#   publish_release  - Prepare release (create shared dirs/files links)\n"
+		content += "#   symlink_release  - Update 'current' symlink to point to new release\n"
+		content += "#   cleanup          - Remove old releases (keep only specified number)\n"
+		content += "#   rollback         - Rollback to previous release\n"
+		content += "#\n"
+		content += "# Custom tasks are defined in the 'tasks' section above.\n\n"
 	}
 
 	content += "recipe:\n"
 
 	if complexity == simple {
-		content += "  - update_code\n"
-		content += "  - symlink_release\n"
-		content += "  - cleanup\n\n"
+		content += "  - update_code        # Upload code to server\n"
+		content += "  - symlink_release     # Point 'current' to new release\n"
+		content += "  - cleanup             # Remove old releases\n\n"
 	} else if complexity == standard {
-		content += "  - build\n"
-		content += "  - update_code\n"
-		content += "  - publish_release\n"
-		content += "  - symlink_release\n"
-		content += "  - restart_app\n"
-		content += "  - cleanup\n\n"
+		content += "  - build               # Build locally (custom task)\n"
+		content += "  - update_code         # Upload to release directory\n"
+		content += "  - publish_release     # Setup shared directories/files\n"
+		content += "  - symlink_release     # Update current symlink\n"
+		content += "  - cleanup             # Remove old releases\n\n"
 	} else if complexity == advanced {
-		content += "  - backup\n"
-		content += "  - build\n"
-		content += "  - update_code\n"
-		content += "  - publish_release\n"
-		content += "  - migrate\n"
-		content += "  - symlink_release\n"
-		content += "  - restart_app\n"
-		content += "  - cleanup\n\n"
+		content += "  - install-deps        # Install dependencies on server (custom)\n"
+		content += "  - update_code         # Upload code to release directory\n"
+		content += "  - publish_release     # Prepare release (shared dirs/files)\n"
+		content += "  - migrate             # Run database migrations (custom)\n"
+		content += "  - symlink_release     # Update 'current' symlink\n"
+		content += "  - restart-server      # Restart web server (custom)\n"
+		content += "  - cleanup             # Remove old releases\n\n"
 	} else if complexity == full {
 		if includeComments {
-			content += "  # Code update\n"
+			content += "  # Step 1: Prepare and build\n"
 		}
-		content += "  - update_code\n\n"
+		content += "  - build               # Build locally\n\n"
 
 		if includeComments {
-			content += "  # Local build\n"
+			content += "  # Step 2: Upload code\n"
 		}
-		content += "  - build\n\n"
+		content += "  - update_code         # Upload to release directory\n\n"
 
 		if includeComments {
-			content += "  # Release preparation (shared directories/files)\n"
+			content += "  # Step 3: Setup release\n"
 		}
-		content += "  - publish_release\n\n"
+		content += "  - publish_release     # Create shared dirs/files symlinks\n\n"
 
 		if includeComments {
-			content += "  # Create symlink\n"
+			content += "  # Step 4: Install dependencies\n"
 		}
-		content += "  - symlink_release\n\n"
+		content += "  - install-deps        # Install server dependencies\n\n"
 
 		if includeComments {
-			content += "  # Database migration\n"
+			content += "  # Step 5: Run migrations\n"
 		}
-		content += "  - migrate\n\n"
+		content += "  - migrate             # Database migrations\n\n"
 
 		if includeComments {
-			content += "  # Restart application\n"
+			content += "  # Step 6: Go live\n"
 		}
-		content += "  - restart_app\n\n"
+		content += "  - symlink_release     # Point current to new release\n\n"
 
 		if includeComments {
-			content += "  # Cleanup old releases\n"
+			content += "  # Step 7: Restart services\n"
 		}
-		content += "  - cleanup\n\n"
+		content += "  - restart-server      # Restart web server\n\n"
+
+		if includeComments {
+			content += "  # Step 8: Cleanup\n"
+		}
+		content += "  - cleanup             # Remove old releases\n\n"
 	}
 
 	return content
@@ -471,50 +532,80 @@ func generateHooksConfig(complexity templateComplexity, includeComments bool) st
 		content += "# ====================\n"
 		content += "# Deployment Hooks Configuration\n"
 		content += "# ====================\n"
-		content += "# Hooks allow you to execute custom commands before/after specific events\n\n"
+		content += "# Hooks allow you to execute custom commands at specific points.\n"
+		content += "#\n"
+		content += "# Available hook types:\n"
+		content += "#   before_all         - Before deployment starts\n"
+		content += "#   after_all          - After deployment completes successfully\n"
+		content += "#   before_<task>      - Before a specific task runs\n"
+		content += "#   after_<task>       - After a specific task completes (success or failure)\n"
+		content += "#   after_<task>:success - After a specific task succeeds\n"
+		content += "#   after_<task>:failed  - After a specific task fails\n"
+		content += "#   on_failed          - When any task fails during deployment\n"
+		content += "#\n"
+		content += "# Available variables in hooks:\n"
+		content += "#   {{stage}}      - Current deployment stage\n"
+		content += "#   {{release_path}} - Path to current release\n"
+		content += "#   {{error}}      - Error message (only in on_failed)\n\n"
 	}
 
 	content += "hooks:\n"
 
 	if includeComments {
-		content += "  # Global before hook (before all tasks)\n"
+		content += "  # Global hooks - run at start/end of deployment\n"
 	}
 	content += "  before_all:\n"
-	content += "    - echo \"Starting deployment to {{stage}} environment...\"\n\n"
+	content += "    - echo \"Starting deployment to {{stage}} environment...\"\n"
+	content += "    - echo \"Timestamp: $(date)\"\n\n"
 
 	if complexity == advanced || complexity == full {
 		if includeComments {
-			content += "  # Global after hook (after all tasks)\n"
+			content += "  # After all tasks complete successfully\n"
 		}
 		content += "  after_all:\n"
-		content += "    - echo \"Deployment completed successfully!\"\n\n"
+		content += "    - echo \"Deployment completed successfully!\"\n"
+		content += "    - echo \"Release path: {{release_path}}\"\n\n"
 
 		if includeComments {
-			content += "  # Before specific task hook\n"
+			content += "  # Task-specific hooks\n"
+			content += "  # These run before/after specific tasks in your recipe\n"
 		}
 		content += "  before_build:\n"
-		content += "    - echo \"Preparing to build...\"\n\n"
+		content += "    - echo \"Preparing to build...\"\n"
+		content += "    - echo \"Free disk space: $(df -h .)\"\n\n"
 
 		if includeComments {
-			content += "  # Success hook for specific task\n"
+			content += "  # Success hook - only runs if task succeeds\n"
 		}
 		content += "  after_build:success:\n"
 		content += "    - echo \"Build succeeded!\"\n"
-		content += "    - echo \"Notifying team...\"\n\n"
+		content += "    - echo \"Notifying team...\"\n"
+		content += "    - echo \"Build size: $(du -sh dist)\"\n\n"
 
 		if includeComments {
-			content += "  # Failure hook for specific task\n"
+			content += "  # Failure hook - only runs if task fails\n"
 		}
 		content += "  after_build:failed:\n"
 		content += "    - echo \"Build failed!\"\n"
-		content += "    - echo \"Sending alert...\"\n\n"
+		content += "    - echo \"Sending alert to team...\"\n\n"
 
 		if includeComments {
-			content += "  # Global failure hook (when any task fails)\n"
+			content += "  # More task-specific examples\n"
+		}
+		content += "  before_migrate:\n"
+		content += "    - echo \"Creating database backup before migration...\"\n"
+		content += "    - remote: mysqldump db_name > backup.sql\n\n"
+
+		content += "  after_migrate:success:\n"
+		content += "    - echo \"Migration completed successfully\"\n\n"
+
+		if includeComments {
+			content += "  # Global failure hook - runs when ANY task fails\n"
 		}
 		content += "  on_failed:\n"
 		content += "    - echo \"Deployment failed! Error: {{error}}\"\n"
-		content += "    - echo \"Rolling back...\"\n\n"
+		content += "    - echo \"Rolling back changes...\"\n"
+		content += "    - echo \"Sending alert to administrators\"\n\n"
 	}
 
 	return content

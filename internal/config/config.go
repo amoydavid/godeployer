@@ -40,6 +40,7 @@ type Config struct {
 // StageConfig 表示环境特定配置
 type StageConfig struct {
 	Server         string                 `yaml:"server"`
+	Port           int                    `yaml:"port"`
 	PrivateKeyPath string                 `yaml:"private_key_path"`
 	RemoteDir      string                 `yaml:"remote_dir"`
 	KeepReleases   int                    `yaml:"keep_releases"`
@@ -96,6 +97,9 @@ func LoadConfig(filepath string) (*Config, error) {
 	for name, stage := range config.Stages {
 		if stage.KeepReleases <= 0 {
 			stage.KeepReleases = 5
+		}
+		if stage.Port <= 0 {
+			stage.Port = 22
 		}
 		if stage.Vars == nil {
 			stage.Vars = make(map[string]interface{})

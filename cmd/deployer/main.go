@@ -251,7 +251,7 @@ func runSSH(cmd *cobra.Command, args []string) error {
 
 	// 构建 SSH 命令，支持私钥路径
 	sshArgs := []string{"-t"}
-	sshArgs = append(sshArgs, executor.BuildSSHArgs(deployCtx.StageConfig.PrivateKeyPath)...)
+	sshArgs = append(sshArgs, executor.BuildSSHArgs(deployCtx.StageConfig.PrivateKeyPath, deployCtx.StageConfig.Port)...)
 	sshArgs = append(sshArgs, deployCtx.StageConfig.Server,
 		"cd "+deployCtx.StageConfig.RemoteDir+"/current 2>/dev/null || cd "+deployCtx.StageConfig.RemoteDir+"; exec $SHELL -l",
 	)

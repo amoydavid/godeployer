@@ -51,7 +51,7 @@ func (e *Executor) initPoolSocket() {
 
 	// 否则从全局连接池获取
 	pool := GetGlobalPool()
-	socket, _, err := pool.GetMasterSocket(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Server)
+	socket, _, err := pool.GetMasterSocket(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Server, e.ctx.StageConfig.Port)
 	if err == nil {
 		e.currentSocket = socket
 	}
@@ -75,26 +75,53 @@ func RunSSHCommand(args ...string) error {
 }
 
 // BuildSSHArgs 构建 SSH 参数切片（用于 exec.Command）
-func BuildSSHArgs(privateKeyPath string) []string {
+func BuildSSHArgs(privateKeyPath string, port int) []string {
 	args := []string{}
 	if privateKeyPath != "" {
 		args = append(args, "-i", privateKeyPath)
 	}
+	if port > 0 && port != 22 {
+		args = append(args, "-p", fmt.Sprintf("%d", port))
+	}
+	// 添加选项以避免代理干扰
+	args = append(args, "-o", "ProxyCommand=none")
+	args = append(args, "-o", "ClearAllForwardings=yes")
 	return args
 }
 
 // BuildSSHCommand 构建完整的 SSH 命令切片
-func BuildSSHCommand(privateKeyPath, server, command string) []string {
-	args := BuildSSHArgs(privateKeyPath)
+func BuildSSHCommand(privateKeyPath string, port int, server, command string) []string {
+	args := BuildSSHArgs(privateKeyPath, port)
 	return append(args, server, command)
 }
 
 // BuildSSHInlineArgs 构建 SSH 参数字符串（用于 shell 命令中的内联使用）
-func BuildSSHInlineArgs(privateKeyPath string) string {
+func BuildSSHInlineArgs(privateKeyPath string, port int) string {
+	args := ""
 	if privateKeyPath != "" {
-		return fmt.Sprintf("-i %s ", privateKeyPath)
+		args += fmt.Sprintf("-i %s ", privateKeyPath)
 	}
-	return ""
+	if port > 0 && port != 22 {
+		args += fmt.Sprintf("-p %d ", port)
+	}
+	// 添加选项以避免代理干扰
+	args += "-o ProxyCommand=none -o ClearAllForwardings=yes "
+	return args
+}
+
+// BuildSCPInlineArgs 构建 SCP 参数字符串（用于 shell 命令中的内联使用）
+// SCP 使用 -P（大写）而不是 -p（小写）来指定端口
+func BuildSCPInlineArgs(privateKeyPath string, port int) string {
+	args := ""
+	if privateKeyPath != "" {
+		args += fmt.Sprintf("-i %s ", privateKeyPath)
+	}
+	if port > 0 && port != 22 {
+		args += fmt.Sprintf("-P %d ", port)
+	}
+	// 添加选项以避免代理干扰
+	args += "-o ProxyCommand=none -o ClearAllForwardings=yes "
+	return args
 }
 
 // getSystemShell 根据操作系统返回合适的 shell 命令
@@ -176,7 +203,7 @@ func (e *Executor) RunRemoteCommand(command string) error {
 	shellCmd := fmt.Sprintf("exec bash -l -c '%s'", resolvedCommand)
 
 	// 构建基础 SSH 参数
-	sshArgs := BuildSSHArgs(e.ctx.StageConfig.PrivateKeyPath)
+	sshArgs := BuildSSHArgs(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Port)
 
 	// 如果启用了连接池，添加 ControlPath
 	if e.enablePool && e.currentSocket != "" {
@@ -216,7 +243,7 @@ func (e *Executor) RunRemoteCommandWithOutput(command string) (string, error) {
 	shellCmd := fmt.Sprintf("exec $SHELL -l -c '%s'", resolvedCommand)
 
 	// 构建基础 SSH 参数
-	sshArgs := BuildSSHArgs(e.ctx.StageConfig.PrivateKeyPath)
+	sshArgs := BuildSSHArgs(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Port)
 
 	// 如果启用了连接池，添加 ControlPath
 	if e.enablePool && e.currentSocket != "" {
@@ -276,7 +303,7 @@ func (e *Executor) UploadDirectory(source, destination string, options string) e
 		}
 
 		// 构建 ssh 参数（在管道命令中以字符串形式）
-		sshInlineArgs := BuildSSHInlineArgs(e.ctx.StageConfig.PrivateKeyPath)
+		sshInlineArgs := BuildSSHInlineArgs(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Port)
 
 		// 根据本地操作系统选择合适的 tar 命令
 		tarLocal := "tar -czf - ."
@@ -306,8 +333,8 @@ func (e *Executor) UploadDirectory(source, destination string, options string) e
 			targetPath = resolvedDest + sourceInfo.Name()
 		}
 
-		// 使用辅助函数构建 SSH 参数
-		keyPart := BuildSSHInlineArgs(e.ctx.StageConfig.PrivateKeyPath)
+		// 使用辅助函数构建 SCP 参数（注意：SCP 使用 -P 大写）
+		keyPart := BuildSCPInlineArgs(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Port)
 		scpCommand := fmt.Sprintf("scp %s%s %s %s:%s",
 			keyPart,
 			optionsStr,

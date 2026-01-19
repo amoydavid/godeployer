@@ -23,7 +23,7 @@ func NewSSHPool() *SSHPool {
 
 // GetMasterSocket 获取或创建 ControlMaster socket
 // 返回 socket 路径和是否是新创建的连接
-func (p *SSHPool) GetMasterSocket(privateKeyPath, server string) (string, bool, error) {
+func (p *SSHPool) GetMasterSocket(privateKeyPath, server string, port int) (string, bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -33,7 +33,7 @@ func (p *SSHPool) GetMasterSocket(privateKeyPath, server string) (string, bool, 
 	}
 
 	// 创建新的 ControlMaster socket
-	socketPath, err := p.createMasterSocket(privateKeyPath, server)
+	socketPath, err := p.createMasterSocket(privateKeyPath, server, port)
 	if err != nil {
 		return "", false, fmt.Errorf("创建 ControlMaster 失败: %w", err)
 	}
@@ -43,14 +43,14 @@ func (p *SSHPool) GetMasterSocket(privateKeyPath, server string) (string, bool, 
 }
 
 // createMasterSocket 创建 ControlMaster socket
-func (p *SSHPool) createMasterSocket(privateKeyPath, server string) (string, error) {
+func (p *SSHPool) createMasterSocket(privateKeyPath, server string, port int) (string, error) {
 	// 在临时目录创建 socket
 	tmpDir := os.TempDir()
 	socketPath := filepath.Join(tmpDir, fmt.Sprintf("ssh-cm-%s.sock", sanitizeServerName(server)))
 
 	// 使用 ControlMaster 创建持久连接
 	// ssh -fN -S <socket> -o ControlMaster=yes -o ControlPersist=yes <server>
-	args := BuildSSHArgs(privateKeyPath)
+	args := BuildSSHArgs(privateKeyPath, port)
 	args = append(args,
 		"-fN",            // 后台执行，不执行远程命令
 		"-S", socketPath, // 指定 socket 路径

@@ -37,7 +37,7 @@ func (r *Recipe) Execute(ctx *deployctx.DeployContext) error {
 
 	// 为当前服务器创建 ControlMaster 连接
 	if !ctx.DryRun {
-		socket, isNew, err := pool.GetMasterSocket(ctx.StageConfig.PrivateKeyPath, ctx.StageConfig.Server)
+		socket, isNew, err := pool.GetMasterSocket(ctx.StageConfig.PrivateKeyPath, ctx.StageConfig.Server, ctx.StageConfig.Port)
 		if err != nil {
 			ctx.Logger.Warnf("Failed to create SSH connection pool: %v, using direct connection", err)
 		} else {
@@ -335,7 +335,7 @@ func (e *HookExecutor) executeRemote(command string) error {
 	defer cancel()
 
 	// 使用辅助函数构建 SSH 参数
-	sshArgs := executor.BuildSSHCommand(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Server, command)
+	sshArgs := executor.BuildSSHCommand(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Port, e.ctx.StageConfig.Server, command)
 	e.ctx.Logger.Infof("Executing remote command: ssh %s", strings.Join(sshArgs, " "))
 	cmd := exec.CommandContext(cmdCtx, "ssh", sshArgs...)
 

@@ -10,22 +10,162 @@ import (
 	"time"
 
 	deployctx "deployer/internal/context"
+
+	"al.essio.dev/pkg/shellescape"
 )
 
 // Executor 处理命令执行
 type Executor struct {
-	ctx *deployctx.DeployContext
+	ctx           *deployctx.DeployContext
+	enablePool    bool   // 是否启用 SSH 连接池
+	currentSocket string // 当前使用的 ControlMaster socket
 }
 
 // NewExecutor 创建新的执行器
 func NewExecutor(ctx *deployctx.DeployContext) *Executor {
-	return &Executor{ctx: ctx}
+	exec := &Executor{ctx: ctx, enablePool: false}
+	// 如果 context 中有 SSH 连接池 socket，自动启用并使用
+	if ctx.SSHPoolSocket != "" {
+		exec.enablePool = true
+		exec.currentSocket = ctx.SSHPoolSocket
+	}
+	return exec
+}
+
+// NewExecutorWithPool 创建新的执行器（启用连接池）
+func NewExecutorWithPool(ctx *deployctx.DeployContext) *Executor {
+	exec := &Executor{ctx: ctx, enablePool: true}
+	exec.initPoolSocket()
+	return exec
+}
+
+// initPoolSocket 初始化连接池 socket
+func (e *Executor) initPoolSocket() {
+	if !e.enablePool || e.ctx.DryRun {
+		return
+	}
+
+	// 如果 context 中已经设置了 SSHPoolSocket，直接使用
+	if e.ctx.SSHPoolSocket != "" {
+		e.currentSocket = e.ctx.SSHPoolSocket
+		return
+	}
+
+	// 否则从全局连接池获取
+	pool := GetGlobalPool()
+	socket, _, err := pool.GetMasterSocket(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Server, e.ctx.StageConfig.Port)
+	if err == nil {
+		e.currentSocket = socket
+	}
+}
+
+// SetPoolSocket 设置当前使用的 ControlMaster socket
+func (e *Executor) SetPoolSocket(socket string) {
+	e.currentSocket = socket
 }
 
 // 默认超时时间
 const defaultTimeout = 10 * time.Minute
 
-// getSystemShell 根据操作系统返回合适的 shell 命令
+// RunSSHCommand 执行交互式 SSH 命令（用于 SSH 登录）
+func RunSSHCommand(args ...string) error {
+	cmd := exec.Command("ssh", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// BuildSSHArgs 构建 SSH 参数切片（用于 exec.Command）
+func BuildSSHArgs(privateKeyPath string, port int) []string {
+	args := []string{}
+	if privateKeyPath != "" {
+		args = append(args, "-i", privateKeyPath)
+	}
+	if port > 0 && port != 22 {
+		args = append(args, "-p", fmt.Sprintf("%d", port))
+	}
+	// 添加选项以避免代理干扰
+	args = append(args, "-o", "ProxyCommand=none")
+	args = append(args, "-o", "ClearAllForwardings=yes")
+	return args
+}
+
+// BuildSSHCommand 构建完整的 SSH 命令切片
+func BuildSSHCommand(privateKeyPath string, port int, server, command string) []string {
+	args := BuildSSHArgs(privateKeyPath, port)
+	return append(args, server, command)
+}
+
+// BuildSSHInlineArgs 构建 SSH 参数字符串（用于 shell 命令中的内联使用）
+func BuildSSHInlineArgs(privateKeyPath string, port int) string {
+	args := ""
+	if privateKeyPath != "" {
+		args += fmt.Sprintf("-i %s ", privateKeyPath)
+	}
+	if port > 0 && port != 22 {
+		args += fmt.Sprintf("-p %d ", port)
+	}
+	// 添加选项以避免代理干扰
+	args += "-o ProxyCommand=none -o ClearAllForwardings=yes "
+	return args
+}
+
+// BuildSCPInlineArgs 构建 SCP 参数字符串（用于 shell 命令中的内联使用）
+// SCP 使用 -P（大写）而不是 -p（小写）来指定端口
+func BuildSCPInlineArgs(privateKeyPath string, port int) string {
+	args := ""
+	if privateKeyPath != "" {
+		args += fmt.Sprintf("-i %s ", privateKeyPath)
+	}
+	if port > 0 && port != 22 {
+		args += fmt.Sprintf("-P %d ", port)
+	}
+	// 添加选项以避免代理干扰
+	args += "-o ProxyCommand=none -o ClearAllForwardings=yes "
+	return args
+}
+
+// buildEnvVars 从上下文变量构建环境变量列表
+func buildEnvVars(vars map[string]interface{}) []string {
+	envVars := make([]string, 0, len(vars))
+
+	for name, value := range vars {
+		var strValue string
+		switch v := value.(type) {
+		case string:
+			strValue = v
+		default:
+			strValue = fmt.Sprintf("%v", v)
+		}
+		envVars = append(envVars, fmt.Sprintf("%s=%s", name, strValue))
+	}
+
+	return envVars
+}
+
+// buildEnvExports 构建环境变量导出命令字符串
+func buildEnvExports(vars map[string]interface{}) string {
+	if len(vars) == 0 {
+		return ""
+	}
+
+	var exports []string
+	for name, value := range vars {
+		var strValue string
+		switch v := value.(type) {
+		case string:
+			strValue = shellescape.Quote(v)
+		default:
+			strValue = shellescape.Quote(fmt.Sprintf("%v", v))
+		}
+		exports = append(exports, fmt.Sprintf("export %s=%s", name, strValue))
+	}
+
+	return strings.Join(exports, "; ") + "; "
+}
+
+// getSystemShell 获取系统shell根据操作系统返回合适的 shell 命令
 func getSystemShell() (string, []string) {
 	switch runtime.GOOS {
 	case "windows":
@@ -39,9 +179,9 @@ func getSystemShell() (string, []string) {
 func (e *Executor) RunLocalCommand(command string) error {
 	resolvedCommand := e.ctx.ResolveVar(command)
 
-	e.ctx.Logger.Infof("执行本地命令: %s", resolvedCommand)
+	e.ctx.Logger.Infof("Executing local command: %s", resolvedCommand)
 	if e.ctx.DryRun {
-		e.ctx.Logger.Infof("[模拟运行] 将执行: %s", resolvedCommand)
+		e.ctx.Logger.Infof("[Dry-run] Would execute: %s", resolvedCommand)
 		return nil
 	}
 
@@ -51,6 +191,10 @@ func (e *Executor) RunLocalCommand(command string) error {
 
 	shell, args := getSystemShell()
 	cmd := exec.CommandContext(cmdCtx, shell, append(args, resolvedCommand)...)
+
+	// 设置环境变量：继承当前环境变量 + 添加配置中的变量
+	cmd.Env = append(os.Environ(), buildEnvVars(e.ctx.Vars)...)
+
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -65,9 +209,9 @@ func (e *Executor) RunLocalCommand(command string) error {
 func (e *Executor) RunLocalCommandWithOutput(command string) (string, error) {
 	resolvedCommand := e.ctx.ResolveVar(command)
 
-	e.ctx.Logger.Infof("执行本地命令: %s", resolvedCommand)
+	e.ctx.Logger.Infof("Executing local command: %s", resolvedCommand)
 	if e.ctx.DryRun {
-		e.ctx.Logger.Infof("[模拟运行] 将执行: %s", resolvedCommand)
+		e.ctx.Logger.Infof("[Dry-run] Would execute: %s", resolvedCommand)
 		return "[模拟运行输出]", nil
 	}
 
@@ -77,6 +221,10 @@ func (e *Executor) RunLocalCommandWithOutput(command string) (string, error) {
 
 	shell, args := getSystemShell()
 	cmd := exec.CommandContext(cmdCtx, shell, append(args, resolvedCommand)...)
+
+	// 设置环境变量：继承当前环境变量 + 添加配置中的变量
+	cmd.Env = append(os.Environ(), buildEnvVars(e.ctx.Vars)...)
+
 	output, err := cmd.CombinedOutput()
 
 	if cmdCtx.Err() == context.DeadlineExceeded {
@@ -89,9 +237,9 @@ func (e *Executor) RunLocalCommandWithOutput(command string) (string, error) {
 func (e *Executor) RunRemoteCommand(command string) error {
 	resolvedCommand := e.ctx.ResolveVar(command)
 
-	e.ctx.Logger.Infof("执行远程命令: %s", resolvedCommand)
+	e.ctx.Logger.Infof("Executing remote command: %s", resolvedCommand)
 	if e.ctx.DryRun {
-		e.ctx.Logger.Infof("[模拟运行] 将在 %s 上执行: %s",
+		e.ctx.Logger.Infof("[Dry-run] Would execute on %s: %s",
 			e.ctx.StageConfig.Server, resolvedCommand)
 		return nil
 	}
@@ -100,15 +248,23 @@ func (e *Executor) RunRemoteCommand(command string) error {
 	cmdCtx, cancel := context.WithTimeout(e.ctx.Context, defaultTimeout)
 	defer cancel()
 
-	// 使用登录 shell 执行命令
-	shellCmd := fmt.Sprintf("exec bash -l -c '%s'", resolvedCommand)
-	// 组装 ssh 参数，考虑私钥
-	sshArgs := []string{}
-	if e.ctx.StageConfig.PrivateKeyPath != "" {
-		sshArgs = append(sshArgs, "-i", e.ctx.StageConfig.PrivateKeyPath)
+	// 构建环境变量导出命令并添加到用户命令前
+	envExports := buildEnvExports(e.ctx.Vars)
+
+	// 使用登录 shell 执行命令，先导出环境变量
+	shellCmd := fmt.Sprintf("exec bash -l -c '%s%s'", envExports, resolvedCommand)
+
+	// 构建基础 SSH 参数
+	sshArgs := BuildSSHArgs(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Port)
+
+	// 如果启用了连接池，添加 ControlPath
+	if e.enablePool && e.currentSocket != "" {
+		sshArgs = append(sshArgs, "-S", e.currentSocket)
 	}
+
 	sshArgs = append(sshArgs, e.ctx.StageConfig.Server, shellCmd)
-	e.ctx.Logger.Infof("执行远程命令: ssh %s", strings.Join(sshArgs, " "))
+
+	e.ctx.Logger.Infof("Executing remote command: ssh %s", strings.Join(sshArgs, " "))
 	cmd := exec.CommandContext(cmdCtx, "ssh", sshArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -124,9 +280,9 @@ func (e *Executor) RunRemoteCommand(command string) error {
 func (e *Executor) RunRemoteCommandWithOutput(command string) (string, error) {
 	resolvedCommand := e.ctx.ResolveVar(command)
 
-	e.ctx.Logger.Infof("执行远程命令: %s", resolvedCommand)
+	e.ctx.Logger.Infof("Executing remote command: %s", resolvedCommand)
 	if e.ctx.DryRun {
-		e.ctx.Logger.Infof("[模拟运行] 将在 %s 上执行: %s",
+		e.ctx.Logger.Infof("[Dry-run] Would execute on %s: %s",
 			e.ctx.StageConfig.Server, resolvedCommand)
 		return "[模拟运行输出]", nil
 	}
@@ -135,14 +291,23 @@ func (e *Executor) RunRemoteCommandWithOutput(command string) (string, error) {
 	cmdCtx, cancel := context.WithTimeout(e.ctx.Context, defaultTimeout)
 	defer cancel()
 
-	// 使用登录 shell 执行命令
-	shellCmd := fmt.Sprintf("exec $SHELL -l -c '%s'", resolvedCommand)
-	sshArgs := []string{}
-	if e.ctx.StageConfig.PrivateKeyPath != "" {
-		sshArgs = append(sshArgs, "-i", e.ctx.StageConfig.PrivateKeyPath)
+	// 构建环境变量导出命令并添加到用户命令前
+	envExports := buildEnvExports(e.ctx.Vars)
+
+	// 使用登录 shell 执行命令，先导出环境变量
+	shellCmd := fmt.Sprintf("exec $SHELL -l -c '%s%s'", envExports, resolvedCommand)
+
+	// 构建基础 SSH 参数
+	sshArgs := BuildSSHArgs(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Port)
+
+	// 如果启用了连接池，添加 ControlPath
+	if e.enablePool && e.currentSocket != "" {
+		sshArgs = append(sshArgs, "-S", e.currentSocket)
 	}
+
 	sshArgs = append(sshArgs, e.ctx.StageConfig.Server, shellCmd)
-	e.ctx.Logger.Infof("执行远程命令: ssh %s", strings.Join(sshArgs, " "))
+
+	e.ctx.Logger.Infof("Executing remote command: ssh %s", strings.Join(sshArgs, " "))
 	cmd := exec.CommandContext(cmdCtx, "ssh", sshArgs...)
 	output, err := cmd.CombinedOutput()
 	if cmdCtx.Err() == context.DeadlineExceeded {
@@ -169,11 +334,11 @@ func (e *Executor) UploadDirectory(source, destination string, options string) e
 		return fmt.Errorf("源路径不存在: %w", err)
 	}
 
-	e.ctx.Logger.Infof("上传从 %s 到 %s:%s",
+	e.ctx.Logger.Infof("Uploading from %s to %s:%s",
 		resolvedSource, e.ctx.StageConfig.Server, resolvedDest)
 
 	if e.ctx.DryRun {
-		e.ctx.Logger.Infof("[模拟运行] 将上传 %s 到 %s:%s",
+		e.ctx.Logger.Infof("[Dry-run] Would upload %s to %s:%s",
 			resolvedSource, e.ctx.StageConfig.Server, resolvedDest)
 		return nil
 	}
@@ -193,11 +358,7 @@ func (e *Executor) UploadDirectory(source, destination string, options string) e
 		}
 
 		// 构建 ssh 参数（在管道命令中以字符串形式）
-		sshInlineArgs := ""
-		if e.ctx.StageConfig.PrivateKeyPath != "" {
-			// 直接附加 -i 参数；路径简单情况下无需复杂转义
-			sshInlineArgs = fmt.Sprintf("-i %s ", e.ctx.StageConfig.PrivateKeyPath)
-		}
+		sshInlineArgs := BuildSSHInlineArgs(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Port)
 
 		// 根据本地操作系统选择合适的 tar 命令
 		tarLocal := "tar -czf - ."
@@ -227,10 +388,8 @@ func (e *Executor) UploadDirectory(source, destination string, options string) e
 			targetPath = resolvedDest + sourceInfo.Name()
 		}
 
-		keyPart := ""
-		if e.ctx.StageConfig.PrivateKeyPath != "" {
-			keyPart = fmt.Sprintf("-i %s ", e.ctx.StageConfig.PrivateKeyPath)
-		}
+		// 使用辅助函数构建 SCP 参数（注意：SCP 使用 -P 大写）
+		keyPart := BuildSCPInlineArgs(e.ctx.StageConfig.PrivateKeyPath, e.ctx.StageConfig.Port)
 		scpCommand := fmt.Sprintf("scp %s%s %s %s:%s",
 			keyPart,
 			optionsStr,

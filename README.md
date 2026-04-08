@@ -283,9 +283,9 @@ type Plugin interface {
 
 ## 许可证
 
-GNU Affero General Public License v3.0 (AGPL-3.0)
+GNU General Public License v3.0 (GPL-3.0)
 
-该项目根据GNU Affero通用公共许可证第3版授权。这意味着如果您修改该软件并通过网络提供服务，您必须提供修改后的源代码。完整的许可证文本可在LICENSE文件中找到。
+该项目根据GNU通用公共许可证第3版授权。完整的许可证文本可在LICENSE文件中找到。
 
 ## 贡献
 

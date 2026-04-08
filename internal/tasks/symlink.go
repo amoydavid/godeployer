@@ -34,6 +34,6 @@ func (t *SymlinkReleaseTask) Execute(ctx *deployctx.DeployContext) error {
 		return err
 	}
 
-	ctx.Logger.Success("软链成功创建，current已指向当前版本")
+	ctx.Logger.Success("Symlink created successfully, current now points to the latest release")
 	return nil
 }

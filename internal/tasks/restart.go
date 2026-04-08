@@ -31,17 +31,17 @@ func (t *RestartAppTask) Execute(ctx *deployctx.DeployContext) error {
 	exec := executor.NewExecutor(ctx)
 
 	// 从配置中获取重启命令
-	taskCfg, ok := ctx.Config.Tasks["restart_app"]
-	if ok && taskCfg.Remote != "" {
-		return exec.RunRemoteCommand(taskCfg.Remote)
+	cmd, ok := ctx.GetTaskRemoteCmd("restart_app")
+	if ok {
+		return exec.RunRemoteCommand(cmd)
 	}
 
 	// 如果未配置重启命令，提示用户
-	ctx.Logger.Warn("未在配置文件中找到重启命令。请在 YAML 配置文件中添加 restart_app 任务配置。")
-	ctx.Logger.Info("示例配置:")
+	ctx.Logger.Warn("No restart command found in configuration file. Please add restart_app task configuration in YAML file.")
+	ctx.Logger.Info("Example configuration:")
 	ctx.Logger.Info("tasks:")
 	ctx.Logger.Info("  restart_app:")
 	ctx.Logger.Info("    remote: 'cd {{remote_dir}}/current && pm2 restart your-app-name'")
 
-	return fmt.Errorf("重启失败：未配置重启命令")
+	return fmt.Errorf("restart failed: no restart command configured")
 }

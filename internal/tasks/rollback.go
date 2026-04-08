@@ -44,9 +44,9 @@ func (t *RollbackTask) Execute(ctx *deployctx.DeployContext) error {
 	exec := executor.NewExecutor(ctx)
 
 	// 如果配置中有自定义命令，使用它
-	taskCfg, ok := ctx.Config.Tasks["rollback"]
-	if ok && taskCfg.Remote != "" {
-		return exec.RunRemoteCommand(taskCfg.Remote)
+	cmd, ok := ctx.GetTaskRemoteCmd("rollback")
+	if ok {
+		return exec.RunRemoteCommand(cmd)
 	}
 
 	// 否则，执行默认回滚逻辑
@@ -58,7 +58,7 @@ func (t *RollbackTask) Execute(ctx *deployctx.DeployContext) error {
 		return fmt.Errorf("获取当前版本失败: %w", err)
 	}
 
-	ctx.Logger.Info(fmt.Sprintf("当前版本: %s", currentVersionOutput))
+	ctx.Logger.Info(fmt.Sprintf("Current version: %s", currentVersionOutput))
 
 	// 2. 获取可用的历史版本列表
 	listVersionsCmd := "ls -dt {{remote_dir}}/releases/* | head -n " + fmt.Sprintf("%d", t.Steps+1)
@@ -77,8 +77,14 @@ func (t *RollbackTask) Execute(ctx *deployctx.DeployContext) error {
 	}
 
 	// 3. 根据回滚步数选择目标版本
+	// 添加边界检查，防止数组越界
+	if t.Steps < 0 || t.Steps >= len(versions) {
+		return fmt.Errorf("回滚步数 %d 超出可用版本范围 [0, %d)，当前共有 %d 个版本",
+			t.Steps, len(versions), len(versions))
+	}
+
 	targetVersion := versions[t.Steps]
-	ctx.Logger.Info(fmt.Sprintf("回滚到版本: %s", targetVersion))
+	ctx.Logger.Info(fmt.Sprintf("Rolling back to version: %s", targetVersion))
 
 	// 4. 更新 current 链接到目标版本
 	rollbackCmd := "ln -sfn " + targetVersion + " {{remote_dir}}/current"
@@ -86,6 +92,6 @@ func (t *RollbackTask) Execute(ctx *deployctx.DeployContext) error {
 		return fmt.Errorf("更新当前版本链接失败: %w", err)
 	}
 
-	ctx.Logger.Success(fmt.Sprintf("已成功回滚到版本: %s", targetVersion))
+	ctx.Logger.Success(fmt.Sprintf("Successfully rolled back to version: %s", targetVersion))
 	return nil
 }
